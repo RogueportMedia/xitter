@@ -1186,6 +1186,7 @@ end $$;
 create table if not exists user_stats (
 	user_id bigint primary key references users (id) on delete cascade,
 	posts int not null default 0,
+	reposts int not null default 0,
 	articles int not null default 0,
 	media_posts int not null default 0,
 	likes int not null default 0,
@@ -1193,6 +1194,7 @@ create table if not exists user_stats (
 	followers int not null default 0,
 	following int not null default 0
 );
+alter table user_stats add column if not exists reposts int not null default 0;
 create index if not exists media_user_post_idx on media (user_id, post_id) where post_id is not null;
 
 create or replace function user_stats_posts() returns trigger language plpgsql as $$
@@ -1209,6 +1211,19 @@ begin
 end $$;
 create or replace trigger user_stats_posts_insert after insert on posts referencing new table as new_rows for each statement execute function user_stats_posts();
 create or replace trigger user_stats_posts_delete after delete on posts referencing old table as old_rows for each statement execute function user_stats_posts();
+
+create or replace function user_stats_reposts() returns trigger language plpgsql as $$
+begin
+	if tg_op = 'INSERT' then
+		insert into user_stats (user_id, reposts) select user_id, count(*) from new_rows group by user_id
+			on conflict (user_id) do update set reposts = user_stats.reposts + excluded.reposts;
+	else
+		update user_stats s set reposts = greatest(s.reposts - d.n, 0) from (select user_id, count(*) as n from old_rows group by user_id) d where s.user_id = d.user_id;
+	end if;
+	return null;
+end $$;
+create or replace trigger user_stats_reposts_insert after insert on reposts referencing new table as new_rows for each statement execute function user_stats_reposts();
+create or replace trigger user_stats_reposts_delete after delete on reposts referencing old table as old_rows for each statement execute function user_stats_reposts();
 
 create or replace function user_stats_likes() returns trigger language plpgsql as $$
 begin
@@ -1297,6 +1312,15 @@ do $$ begin
 			on conflict (user_id) do update set posts = excluded.posts, articles = excluded.articles, media_posts = excluded.media_posts,
 				likes = excluded.likes, highlights = excluded.highlights, followers = excluded.followers, following = excluded.following;
 		insert into schema_steps (name) values ('user_stats');
+	end if;
+end $$;
+
+do $$ begin
+	if not exists (select 1 from schema_steps where name = 'user_stats_reposts') then
+		insert into user_stats (user_id, reposts)
+			select user_id, count(*)::int from reposts group by user_id
+			on conflict (user_id) do update set reposts = excluded.reposts;
+		insert into schema_steps (name) values ('user_stats_reposts');
 	end if;
 end $$;
 

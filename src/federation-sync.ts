@@ -47,7 +47,7 @@ async function canonicalOf(kind: "user" | "post", localId: string): Promise<stri
 
 const userCounts = async (id: string) => {
 	const [c] = await sql`select coalesce((u.count_overrides->>'followers')::int, s.followers, 0) as followers, coalesce((u.count_overrides->>'following')::int, s.following, 0) as following,
-		coalesce(s.posts, 0) as posts, coalesce(s.likes, 0) as likes from users u left join user_stats s on s.user_id = u.id where u.id = ${id}::bigint`;
+		coalesce(s.posts + s.reposts, 0) as posts, coalesce(s.likes, 0) as likes from users u left join user_stats s on s.user_id = u.id where u.id = ${id}::bigint`;
 	return c ? { followers: c.followers, following: c.following, posts: c.posts, likes: c.likes } : undefined;
 };
 

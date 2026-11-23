@@ -36,6 +36,7 @@ const a = await session(nameA);
 const b = await session(nameB);
 const userA = (await a.get("UserByScreenName", { screen_name: nameA })).data.user.result;
 const userB = (await a.get("UserByScreenName", { screen_name: nameB })).data.user.result;
+const postsBeforeB = userB.tweet_counts?.tweets ?? 0;
 const created: [typeof a, string][] = [];
 
 const postA = (await a.gql("CreateTweet", { tweet_text: "step 2 test post" })).data.create_tweet.tweet_results.result.rest_id;
@@ -43,6 +44,8 @@ created.push([a, postA]);
 const postB = (await b.gql("CreateTweet", { tweet_text: "a post by B" })).data.create_tweet.tweet_results.result.rest_id;
 created.push([b, postB]);
 const repostId = (await b.gql("CreateRetweet", { tweet_id: postA })).data.create_retweet.retweet_results.result.rest_id;
+const userBAfterRepost = (await a.get("UserByScreenName", { screen_name: nameB })).data.user.result;
+check("repost counts toward the account's total posts", userBAfterRepost.tweet_counts?.tweets === postsBeforeB + 2, { before: postsBeforeB, after: userBAfterRepost.tweet_counts?.tweets });
 
 const forYou = results(entriesOf((await a.get("HomeTimeline", { count: 20 })).data.home.home_timeline_urt));
 const rt = forYou.find((r) => r.rest_id === repostId);
@@ -87,6 +90,8 @@ check("Posts tab includes the account's reposts", postsTabB.some((r) => r.rest_i
 await a.gql("UnpinTweet", {});
 await a.rest("friendships/destroy.json", { user_id: userB.rest_id });
 await b.gql("DeleteRetweet", { source_tweet_id: postA });
+const userBAfterUnrepost = (await a.get("UserByScreenName", { screen_name: nameB })).data.user.result;
+check("undoing a repost lowers the account's total posts", userBAfterUnrepost.tweet_counts?.tweets === postsBeforeB + 2, { before: postsBeforeB, after: userBAfterUnrepost.tweet_counts?.tweets });
 for (const [s, id] of created.reverse()) await s.gql("DeleteTweet", { tweet_id: id });
 
 console.log(failures ? `${failures} check(s) failed` : "all checks passed");

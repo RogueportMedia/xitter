@@ -87,10 +87,13 @@ const liked = await b("POST", `/posts/${pid}/like`);
 check(liked.json.data?.viewer?.liked === true && liked.json.data?.counts?.likes === 1, "like");
 const likers = await a("GET", `/posts/${pid}/likes`);
 check(likers.status === 200 && likers.json.data?.length === 1 && likers.json.data[0]?.screen_name?.toLowerCase() === nameB.toLowerCase(), "GET /posts/{id}/likes lists B", likers.json);
+const postsBefore = (await b("GET", `/users/${nameB}`)).json.data?.counts?.posts;
 check((await b("POST", `/posts/${pid}/repost`)).json.data?.viewer?.reposted === true, "repost");
+check((await b("GET", `/users/${nameB}`)).json.data?.counts?.posts === postsBefore + 1, "repost counts toward total posts");
 check((await b("POST", `/posts/${pid}/bookmark`)).json.data?.viewer?.bookmarked === true, "bookmark");
 check((await b("DELETE", `/posts/${pid}/like`)).json.data?.viewer?.liked === false, "unlike");
 check((await b("DELETE", `/posts/${pid}/repost`)).json.data?.viewer?.reposted === false, "undo repost");
+check((await b("GET", `/users/${nameB}`)).json.data?.counts?.posts === postsBefore, "undo repost lowers total posts");
 check((await b("DELETE", `/posts/${pid}/bookmark`)).json.data?.viewer?.bookmarked === false, "remove bookmark");
 
 // reads

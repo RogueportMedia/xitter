@@ -131,7 +131,7 @@ const like = (q: string) => `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
 const userListCols = sql`u.id::text as id, u.screen_name, u.name, u.avatar_url, u.verified_type, u.allow_affiliates, u.translator, u.flag, u.status, u.role,
 	u.created_at, u.last_seen_at,
-	(select count(*)::int from posts p where p.user_id = u.id) as posts,
+	coalesce((select s.posts + s.reposts from user_stats s where s.user_id = u.id), 0) as posts,
 	(select count(*)::int from follows f where f.followee_id = u.id) as followers,
 	(select string_agg(o.screen_name, ', ' order by af.created_at) from affiliations af join users o on o.id = af.org_id where af.user_id = u.id) as org,
 	(select count(*)::int from affiliations af where af.org_id = u.id) as affiliates`;
