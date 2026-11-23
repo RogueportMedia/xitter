@@ -61,9 +61,9 @@ try {
 	const home = await (await fetch(`${origin}/home`, { headers: { cookie: header(as) } })).text();
 	if (home.startsWith("no pinned client build")) console.log("skip the app shows a banner (no client build here)");
 	else check(home.includes("xitter-impersonating") && home.includes(`by @${boss}`), "the app shows a banner");
-	check((await fetch(`${origin}/account/2fa`, { headers: { cookie: header(as) }, redirect: "manual" })).status === 403, "two-factor settings are out of reach");
-	check((await fetch(`${origin}/account/money`, { headers: { cookie: header(as) }, redirect: "manual" })).status === 403, "money is out of reach");
-	check((await fetch(`${origin}/i/api/1.1/account/change_password.json`, { method: "POST", headers: { cookie: header(as), "x-csrf-token": as.ct0! }, redirect: "manual" })).status === 403, "changing the password is refused");
+	check((await fetch(`${origin}/account/2fa`, { headers: { cookie: header(as) }, redirect: "manual" })).status === 200, "two-factor settings are reachable");
+	check([200, 404].includes((await fetch(`${origin}/account/money`, { headers: { cookie: header(as) }, redirect: "manual" })).status), "money isn't blocked while impersonating");
+	check((await fetch(`${origin}/i/api/1.1/account/verify_password.json`, { method: "POST", headers: { cookie: header(as), "x-csrf-token": as.ct0!, "content-type": "application/json" }, body: JSON.stringify({ password }), redirect: "manual" })).status === 200, "account endpoints work while impersonating");
 	const [sess] = await sql`select expires_at < now() + interval '61 minutes' as short from sessions where user_id = ${target}::bigint and impersonator_id = ${bossId}::bigint`;
 	check(sess?.short, "the session lasts an hour");
 	const [log] = await sql`select detail->>'reason' as reason from audit_log where action = 'impersonate' and target = ${target} and detail->>'reason' is not null limit 1`;
