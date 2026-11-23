@@ -85,7 +85,7 @@ function verificationInfo(u: User) {
 	const instance = settings().instance_name;
 	const type = shownVerifiedType(u);
 	const parts: (string | { text: string; url: string })[] = u.org && affiliateChecked(u)
-		? ["This account is verified because it’s an affiliate of ", { text: `@${u.org.screen_name}`, url: `${PUBLIC_ORIGIN}/${u.org.screen_name}` }, ` on ${instance}. `]
+		? ["This account is verified because it’s an affiliate of ", { text: `@${u.org.screen_name}`, url: `https://x.com/${u.org.screen_name}` }, ` on ${instance}. `]
 		: type === "business"
 			? [`This account is verified because it’s an organization on ${instance}. `]
 			: type === "government"
@@ -250,7 +250,8 @@ function badgeLabel(u: User) {
 		label: {
 			badge: { url: first.url },
 			description: first.description,
-			...(first.org ? { url: { url: `${PUBLIC_ORIGIN}/${first.org}`, urlType: "DeepLink" } } : {}),
+			// x.com links stay inside the app; our own origin opens a new tab
+			...(first.org ? { url: { url: `https://x.com/${first.org}`, urlType: "DeepLink" } } : {}),
 			userLabelType: "BusinessLabel",
 			userLabelDisplayType: "Badge",
 		},
