@@ -92,7 +92,7 @@ function verificationInfo(u: User) {
 				? [`This account is verified because it is a government or multilateral organization account on ${instance}. `]
 				: type === "government_individual"
 					? [`This account is verified because it belongs to a government or multilateral organization official on ${instance}. `]
-					: [`This account is verified because the ${instance} team verified it. `];
+					: [`This account is verified because it met ${instance}’s verification requirements. `];
 	parts.push({ text: "Learn more", url: `${PUBLIC_ORIGIN}/rules` });
 	let text = "";
 	const entities = [];
