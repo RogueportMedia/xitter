@@ -3,6 +3,7 @@
 // screens, and the announcement banner. CSS where an element has a stable link
 // or test id, a small script where only its text tells it apart.
 
+import { PUBLIC_ORIGIN } from "./config";
 import { FEDERATION_ON } from "./federation";
 import { sql } from "./db";
 import { isOrganizationSql } from "./users";
@@ -538,9 +539,63 @@ export const TIDY_SCRIPT = `(function(){
 		if(about&&about.textContent.indexOf("You can choose a text message")>=0)about.textContent="Help protect your account from unauthorized access by asking for a code from an authentication app when you log in, as well as your password.";
 	}
 	// the client opens links outside x.com in a new tab; our own pages (messages
-	// from staff) open in this one
+	// from staff) and any x.com links stay on this instance
+	var ORIGIN=${JSON.stringify(PUBLIC_ORIGIN)};
+	var X_HOST=/^(?:www\\.|mobile\\.)?x\\.com$/i;
+	var SERVER_PAGE=/^\\/(?:rules|tos|privacy|appeal|api|admin)(?:\\/|$)/;
+	var USER_CONTENT='[data-testid="tweetText"],[data-testid="UserDescription"],[data-testid="UserUrl"]';
+	function fromX(u){
+		if(u==null)return null;
+		try{
+			var a=new URL(String(u),location.href);
+			if((a.protocol==="https:"||a.protocol==="http:")&&X_HOST.test(a.hostname))
+				return ORIGIN+a.pathname+a.search+a.hash;
+		}catch(e){}
+		return null;
+	}
+	function rewriteXLinks(){
+		document.querySelectorAll('a[href*="x.com"]').forEach(function(a){
+			if(a.closest(USER_CONTENT))return;
+			var next=fromX(a.getAttribute("href"));
+			if(!next)return;
+			a.setAttribute("href",next);
+			a.setAttribute("data-xitter-x",next);
+			if(a.getAttribute("target")==="_blank")a.removeAttribute("target");
+		});
+	}
+	document.addEventListener("click",function(e){
+		if(e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
+		var a=e.target&&e.target.closest&&e.target.closest("a[href]");
+		if(!a||a.closest(USER_CONTENT))return;
+		var href=a.getAttribute("href");
+		var next=fromX(href);
+		if(!next&&a.getAttribute("data-xitter-x")!==href)return;
+		var target=next||href;
+		if(next){
+			a.setAttribute("href",next);
+			a.setAttribute("data-xitter-x",next);
+			if(a.getAttribute("target")==="_blank")a.removeAttribute("target");
+		}
+		try{
+			var u=new URL(target,location.href);
+			e.preventDefault();e.stopPropagation();
+			if(u.origin===location.origin&&!SERVER_PAGE.test(u.pathname))go(own(u.href));
+			else location.assign(u.href);
+		}catch(err){}
+	},true);
 	var open=window.open;
 	window.open=function(u){
+		var rx=fromX(u);
+		if(rx){
+			var r=new URL(rx);
+			if(r.origin===location.origin){
+				if(SERVER_PAGE.test(r.pathname))location.assign(rx);
+				else go(own(rx));
+				return null;
+			}
+			var args=[].slice.call(arguments);args[0]=rx;
+			return open.apply(window,args);
+		}
 		try{var a=new URL(u,location.href);if(a.origin===location.origin&&a.pathname.indexOf("/account/")===0){go(own(a.href));return null}}catch(e){}
 		return open.apply(window,arguments);
 	};
@@ -602,6 +657,7 @@ export const TIDY_SCRIPT = `(function(){
 		twoFactorRow();
 		navWidth();
 		announce();
+		rewriteXLinks();
 		if(!T.imageGen)document.querySelectorAll('[role="dialog"] button').forEach(function(b){
 			if(b.innerText.trim()!=="Edit Photo")return;
 			var box=b;
