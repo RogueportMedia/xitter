@@ -1,3 +1,16 @@
+# Note
+This repository holds the "*soft-fork*" of Xitter that we host for ourselves on [xitter.sackettalum.net](https://xitter.sackettalum.net/). It follows mostly follows upstream, with some deviations for our needs.
+
+We'll absolutely send some changes we make here upstream if we feel they'd benefit the federated universe of Xitter servers as a whole. That's the beauty of open-source!
+
+You can find upstream's source [here](https://github.com/Xittered/xitter) or on the ``upstream/main`` branch in this repo.
+
+## Differences from upstream
+- reverts "[Color] badge" change introduced in [this commit](https://github.com/Xittered/xitter/commit/d76f99c3c92d7d4dfc7df8851dfb6cbae24fe33d).
+- updates ``scripts/``to sucessfully build workflows within this repo.
+
+---
+
 # Xitter
 
 A self-hosted backend for the X (Twitter) web client. The server hosts a pinned
