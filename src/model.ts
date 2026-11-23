@@ -87,7 +87,7 @@ function verificationInfo(u: User) {
 	const parts: (string | { text: string; url: string })[] = u.org && affiliateChecked(u)
 		? ["This account is verified because it’s an affiliate of ", { text: `@${u.org.screen_name}`, url: `${PUBLIC_ORIGIN}/${u.org.screen_name}` }, ` on ${instance}. `]
 		: type === "business"
-			? [`This account is verified because it’s an organisation on ${instance}. `]
+			? [`This account is verified because it’s an organization on ${instance}. `]
 			: type === "government"
 				? [`This account is verified because it is a government or multilateral organization account on ${instance}. `]
 				: type === "government_individual"
