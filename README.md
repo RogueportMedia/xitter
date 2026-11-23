@@ -8,6 +8,7 @@ You can find upstream's source [here](https://github.com/Xittered/xitter) or on 
 ## Differences from upstream
 - reverts "[Color] badge" change introduced in [this commit](https://github.com/Xittered/xitter/commit/d76f99c3c92d7d4dfc7df8851dfb6cbae24fe33d).
 - updates ``scripts/``to sucessfully build workflows within this repo.
+- groups self-threads (an author replying to their own posts) together as connected conversation modules on Home, Profile, List, and Community timelines.
 
 ---
 

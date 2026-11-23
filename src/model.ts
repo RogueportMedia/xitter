@@ -710,7 +710,7 @@ export function repostResult(id: string, by: User, createdAt: Date, original: Po
 	};
 }
 
-type SocialContext =
+export type SocialContext =
 	| { type: "TimelineGeneralContext"; contextType: string; text: string; landingUrl?: { url: string; urlType: string } }
 	| { type: "TimelineTopicContext"; topic: unknown; functionalityType: string };
 
@@ -781,6 +781,51 @@ export const feedEntry = (
 		: topic
 			? itemEntry(item.post.id, tweetResult(item.post), sortIndex, topic.context, topic.feedbackKeys)
 			: tweetEntry(item.post, sortIndex);
+
+// A self-thread on a timeline (Home, Profile, List, Community): consecutive
+// posts by the same author rendered as one VerticalConversation module.
+export const selfThreadEntry = (
+	posts: PostRow[],
+	sortIndex: string,
+	opts: {
+		prefix?: string;
+		allIds?: string[];
+		hasMore?: boolean;
+		topic?: { context: SocialContext; feedbackKeys: string[] };
+	} = {},
+) => {
+	const root = posts[0]!;
+	const moduleId = `${opts.prefix ?? "home-conversation"}-${root.id}`;
+	const itemId = (id: string) => `${moduleId}-tweet-${id}`;
+	const allTweetIds = opts.allIds ?? posts.map((p) => p.id);
+	return {
+		content: {
+			__typename: "TimelineTimelineModule",
+			displayType: "VerticalConversation",
+			entryType: "TimelineTimelineModule",
+			items: posts.map((p, i) => ({
+				entryId: itemId(p.id),
+				item: {
+					itemContent: tweetItem(tweetResult(p), i === 0 ? (opts.topic?.context ?? communityContext(p)) : undefined),
+					...(i === 0 && opts.topic?.feedbackKeys.length ? { feedbackInfo: { feedbackKeys: opts.topic.feedbackKeys } } : {}),
+				},
+				...(i > 0 ? { treeDisplay: { parentModuleItemEntryId: itemId(posts[i - 1]!.id), indentFromParent: false } } : {}),
+			})),
+			...(opts.hasMore
+				? {
+						footer: {
+							displayType: "Classic",
+							text: "Show this thread",
+							landingUrl: { url: `https://x.com/${root.author.screen_name}/status/${root.id}`, urlType: "ExternalUrl" },
+						},
+					}
+				: {}),
+			metadata: { conversationMetadata: { allTweetIds, enableDeduplication: true } },
+		},
+		entryId: moduleId,
+		sortIndex,
+	};
+};
 
 // the Media tab: one grid module, later pages append to it
 const GRID = "profile-grid-0";

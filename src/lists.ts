@@ -8,9 +8,9 @@ import type { Viewer } from "./auth";
 import { sql } from "./db";
 import { blockedFor, outOfView } from "./blocks";
 import { isId, newId } from "./ids";
-import { cursorEntry, feedEntry, userEntry, userResult } from "./model";
+import { cursorEntry, userEntry, userResult } from "./model";
 import { forbiddenText } from "./names";
-import { PostError, feed } from "./posts";
+import { PostError, feed, timelineEntries } from "./posts";
 import { userByName, usersByIds } from "./users";
 
 type Vars = Record<string, any>;
@@ -235,7 +235,7 @@ async function tweetTimeline(viewerId: string, id: string, vars: Vars) {
 		limit: count,
 		...(newer ? { after: at } : { before: at }),
 	});
-	const entries: unknown[] = items.map((i) => feedEntry(i, i.id));
+	const entries: unknown[] = await timelineEntries(viewerId, items, { prefix: id === ALL_ID ? "home-conversation" : "list-conversation", home: true });
 	const newest = items[0]?.id ?? at ?? newId();
 	const oldest = items[items.length - 1]?.id ?? at ?? newest;
 	entries.unshift(cursorEntry("Top", `t${newest}`, (BigInt(newest) + 1n).toString()));

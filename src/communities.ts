@@ -16,9 +16,9 @@ import {
 	communityObjects,
 	communityRows,
 } from "./community-model";
-import { cursorEntry, feedEntry, tweetEntry, userEntry, userResult } from "./model";
+import { cursorEntry, feedEntry, userEntry, userResult } from "./model";
 import { forbiddenText } from "./names";
-import { PostError, feed, postsByIds } from "./posts";
+import { type FeedItem, PostError, feed, postsByIds, timelineEntries } from "./posts";
 import { usersByIds } from "./users";
 
 type Vars = Record<string, any>;
@@ -99,7 +99,9 @@ async function postsTimeline(viewerId: string, id: string, vars: Vars, media = f
 		limit: count,
 		...(newer ? { after: at } : { before: at }),
 	});
-	const entries: unknown[] = items.map((i) => feedEntry(i, i.id));
+	const entries: unknown[] = media
+		? items.map((i) => feedEntry(i, i.id))
+		: await timelineEntries(viewerId, items, { prefix: "community-conversation" });
 	const newest = items[0]?.id ?? at ?? newId();
 	const oldest = items[items.length - 1]?.id ?? at ?? newest;
 	entries.unshift(cursorEntry("Top", `t${newest}`, (BigInt(newest) + 1n).toString()));
@@ -146,7 +148,8 @@ async function followedPosts(viewerId: string, vars: Vars) {
 			and p.user_id not in ${blockedFor(viewerId)} and not p.hidden and p.id < ${at ?? "9223372036854775807"}::bigint
 		order by p.id desc limit ${count}`;
 	const posts = await postsByIds(viewerId, rows.map((r: any) => r.id));
-	const entries: unknown[] = rows.flatMap((r: any) => (posts.has(r.id) ? [tweetEntry(posts.get(r.id)!, r.id)] : []));
+	const items: FeedItem[] = rows.flatMap((r: any) => (posts.has(r.id) ? [{ id: r.id, post: posts.get(r.id)! }] : []));
+	const entries: unknown[] = await timelineEntries(viewerId, items, { prefix: "community-conversation", home: true });
 	const oldest = rows[rows.length - 1]?.id ?? at;
 	if (rows.length) entries.push(cursorEntry("Bottom", `b${oldest}`, (BigInt(oldest) - 1n).toString()));
 	return { timeline: { instructions: [{ type: "TimelineAddEntries", entries }], metadata: { scribeConfig: { page: "communities" } } } };

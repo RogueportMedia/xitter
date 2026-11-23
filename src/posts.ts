@@ -8,7 +8,8 @@ import { hateIn } from "./hate";
 import { automodStrike } from "./moderation";
 import { feature, hasBlockedPhrase, settings } from "./settings";
 import { postLimitFor, weightedLength } from "./textlen";
-import type { PostRow } from "./model";
+import { type PostRow, type SocialContext, feedEntry, selfThreadEntry } from "./model";
+import { groupSelfThreads } from "./threads";
 import { articlesByIds } from "./articles";
 import { blockedFor, federatedHiddenFor, hasMutedWord, isBlockedEitherWay, mutedFor, outOfView, protectedFor, replyLimited, shadowedFor, suspendedFor } from "./blocks";
 import { staffViewer } from "./staff-access";
@@ -433,6 +434,72 @@ export async function repliesBelow(viewerId: string, id: string, limit = 1000): 
 }
 
 export const hydratePosts = (viewerId: string, posts: PostRow[]) => hydrate(viewerId, posts);
+
+// Posts belonging to the same author's thread for any non-repost post on a
+// timeline page, so timelines can show a user's self-replies connected together.
+export async function selfThreadPosts(viewerId: string, items: FeedItem[], opts: { home?: boolean } = {}): Promise<PostRow[]> {
+	const pairs = new Map<string, { conversationId: string; authorId: string }>();
+	const already = new Set<string>();
+	for (const it of items) {
+		if (it.repost) continue;
+		already.add(it.post.id);
+		if (!it.post.reply_to_id && it.post.reply_count === 0) continue;
+		if (it.post.reply_to_id && it.post.reply_user_id !== it.post.author.id && it.post.reply_count === 0) continue;
+		pairs.set(`${it.post.conversation_id}:${it.post.author.id}`, { conversationId: it.post.conversation_id, authorId: it.post.author.id });
+	}
+	if (!pairs.size) return [];
+	const convIds = [...pairs.values()].map((x) => x.conversationId);
+	const authorIds = [...pairs.values()].map((x) => x.authorId);
+	const rows = await sql`${select(viewerId)}
+		where p.id in (
+			select x.id from unnest(${sql.array(convIds, "INT8")}::bigint[], ${sql.array(authorIds, "INT8")}::bigint[]) as req(cid, uid)
+			cross join lateral (
+				select q.id from posts q
+				where q.conversation_id = req.cid and q.user_id = req.uid
+					and not q.hidden and not q.ad_only and q.reply_hidden_at is null
+					and not (q.id = any(${sql.array([...already], "INT8")}))
+					${opts.home ? sql`and ${circleMember(viewerId, sql`q`)} and not ${hasMutedWord(viewerId, "home_timeline", sql`q.id`)} and (q.community_id is null or q.community_id in (select community_id from community_members where user_id = ${viewerId}::bigint))` : sql``}
+				order by q.id asc limit 100
+			) x
+		)
+		order by p.id asc`;
+	return rows.map(toRow);
+}
+
+export async function timelineEntries(
+	viewerId: string,
+	items: FeedItem[],
+	opts: {
+		prefix?: string;
+		home?: boolean;
+		sortIndex?: (item: FeedItem, index: number) => string;
+		topic?: (item: FeedItem, index: number) => { context: SocialContext; feedbackKeys: string[] } | undefined;
+	} = {},
+): Promise<unknown[]> {
+	if (!items.length) return [];
+	const already = new Set(items.filter((i) => !i.repost).map((i) => i.post.id));
+	const extra = await selfThreadPosts(viewerId, items, { home: opts.home });
+	const groups = groupSelfThreads(items, extra);
+	const toHydrate: PostRow[] = [];
+	const queued = new Set<string>();
+	for (const g of groups) {
+		if (g.kind !== "thread") continue;
+		for (const p of g.posts) {
+			if (!already.has(p.id) && !queued.has(p.id)) {
+				queued.add(p.id);
+				toHydrate.push(p);
+			}
+		}
+	}
+	if (toHydrate.length) await hydrate(viewerId, toHydrate);
+	return groups.map((g) => {
+		const sort = opts.sortIndex ? opts.sortIndex(g.item, g.index) : g.item.id;
+		const topic = opts.topic ? opts.topic(g.item, g.index) : undefined;
+		return g.kind === "thread"
+			? selfThreadEntry(g.posts, sort, { prefix: opts.prefix, allIds: g.allIds, hasMore: g.hasMore, topic })
+			: feedEntry(g.item, sort, topic);
+	});
+}
 
 // Hide reply: only the author of the conversation's first post may hide a
 // reply in it, or show it again.

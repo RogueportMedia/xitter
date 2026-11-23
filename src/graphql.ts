@@ -64,6 +64,7 @@ import {
 	pinnedReplyOf,
 	unrepost,
 	seenBy,
+	timelineEntries,
 } from "./posts";
 import { lookupRemoteUser } from "./federation-sync";
 import { TopicError, setTopicState, suggestedTopics, topicById, topicContext, topicFeedbackActions, topicFeedbackKeys, topicResult, topicsForPosts } from "./topics";
@@ -168,7 +169,10 @@ async function globalPin(viewer: Viewer, entries: unknown[], first: boolean) {
 	const [visible] = await sql`select id from posts where id = ${id}::bigint and not hidden and user_id not in ${blockedFor(viewer.id)} and user_id not in ${outOfView(viewer.id)}`;
 	const post = visible && (await getPost(viewer.id, id));
 	if (!post) return;
-	for (let i = entries.length - 1; i >= 0; i--) if ((entries[i] as any).entryId === `tweet-${id}`) entries.splice(i, 1);
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entryId = (entries[i] as any).entryId;
+		if (entryId === `tweet-${id}` || entryId === `home-conversation-${id}`) entries.splice(i, 1);
+	}
 	entries.unshift(pinnedEntry(post, newId()));
 }
 
@@ -189,20 +193,25 @@ const forYou: Handler = async (viewer, vars) => {
 	const seed = ranked ? Number(ranked[3] ?? 0) : newView();
 	const page = await rankedFeed(viewer.id, { asOf, offset, limit: count, view: seed });
 	// sort indexes run down from asOf in ranked order, below anything newer,
-	// two apart so a boosted post fits between two of them
+	// four apart so a boosted post and flattened self-thread modules fit cleanly
 	const base = BigInt(asOf);
 	const [topics, boosted] = await Promise.all([
 		topicsForPosts(viewer.id, page.items.filter((i) => !i.repost).map((i) => ({ id: i.post.id, authorId: i.post.author.id }))),
 		page.items.length > 2 ? boostedPost(viewer, page.items.map((i) => i.post.id)) : undefined,
 	]);
 	const feedbackActions = [...new Map([...topics.values()].map((t) => [t.id, t])).values()].flatMap(topicFeedbackActions);
-	const entries: unknown[] = page.items.map((item, i) => {
-		const topic = item.repost ? undefined : topics.get(item.post.id);
-		return feedEntry(item, (base - 2n * BigInt(offset + i) - 2n).toString(), topic && { context: topicContext(topic), feedbackKeys: topicFeedbackKeys(topic) });
+	const entries: unknown[] = await timelineEntries(viewer.id, page.items, {
+		prefix: "home-conversation",
+		home: true,
+		sortIndex: (_, i) => (base - 4n * BigInt(offset + i) - 4n).toString(),
+		topic: (item) => {
+			const topic = item.repost ? undefined : topics.get(item.post.id);
+			return topic && { context: topicContext(topic), feedbackKeys: topicFeedbackKeys(topic) };
+		},
 	});
-	if (boosted) entries.splice(2, 0, promotedEntry(boosted, (base - 2n * BigInt(offset + 2) - 1n).toString()));
+	if (boosted && entries.length > 2) entries.splice(2, 0, promotedEntry(boosted, (base - 4n * BigInt(offset + 2) - 3n).toString()));
 	if (!ranked) entries.unshift(cursorEntry("Top", `t${asOf}`, inc(asOf)));
-	if (page.next !== undefined) entries.push(cursorEntry("Bottom", `r${page.next}.${asOf}${seed ? `.${seed}` : ""}`, (base - 2n * BigInt(page.next) - 1n).toString()));
+	if (page.next !== undefined) entries.push(cursorEntry("Bottom", `r${page.next}.${asOf}${seed ? `.${seed}` : ""}`, (base - 4n * BigInt(page.next) - 3n).toString()));
 	await globalPin(viewer,entries,!cursor);
 	return homeResponse(entries, feedbackActions);
 };
@@ -220,7 +229,7 @@ const home =
 		...(newer ? { after: at } : { before: at }),
 	});
 
-	const entries: unknown[] = items.map((i) => feedEntry(i, i.id));
+	const entries: unknown[] = await timelineEntries(viewer.id, items, { prefix: "home-conversation", home: true });
 	const newest = items[0]?.id ?? at ?? newId();
 	const oldest = items[items.length - 1]?.id ?? at ?? newest;
 	// a poll for newer posts only moves the top cursor
@@ -466,7 +475,11 @@ const profileFeed =
 			pinned = user?.pinned_post_id ? await getPost(viewer.id, user.pinned_post_id) : undefined;
 		}
 		// the labelled pinned entry goes first; its regular copy would be a duplicate id
-		const entries: unknown[] = items.filter((i) => i.id !== pinned?.id).map((i) => feedEntry(i, i.id));
+		const visible = items.filter((i) => i.id !== pinned?.id);
+		const entries: unknown[] =
+			!onlyReplies && !articlesOnly && kinds !== "reposts"
+				? await timelineEntries(viewer.id, visible, { prefix: "profile-conversation" })
+				: visible.map((i) => feedEntry(i, i.id));
 		if (pinned) entries.unshift(pinnedEntry(pinned, inc(BigInt(newId()).toString())));
 		if (items.length) {
 			if (!at) entries.unshift(cursorEntry("Top", `t${items[0].id}`, inc(items[0].id)));
