@@ -85,14 +85,14 @@ function verificationInfo(u: User) {
 	const instance = settings().instance_name;
 	const type = shownVerifiedType(u);
 	const parts: (string | { text: string; url: string })[] = u.org && affiliateChecked(u)
-		? ["This account is Premium because it’s an affiliate of ", { text: `@${u.org.screen_name}`, url: `${PUBLIC_ORIGIN}/${u.org.screen_name}` }, ` on ${instance}. `]
+		? ["This account is verified because it’s an affiliate of ", { text: `@${u.org.screen_name}`, url: `${PUBLIC_ORIGIN}/${u.org.screen_name}` }, ` on ${instance}. `]
 		: type === "business"
 			? [`This account is verified because it’s an organisation on ${instance}. `]
 			: type === "government"
 				? [`This account is verified because it is a government or multilateral organization account on ${instance}. `]
 				: type === "government_individual"
 					? [`This account is verified because it belongs to a government or multilateral organization official on ${instance}. `]
-				: [`This account is Premium because the ${instance} team verified it. `];
+					: [`This account is verified because the ${instance} team verified it. `];
 	parts.push({ text: "Learn more", url: `${PUBLIC_ORIGIN}/rules` });
 	let text = "";
 	const entities = [];
@@ -504,19 +504,21 @@ export function tweetResult(p: PostRow, withTypename = true): Record<string, unk
 		__typename: "TweetWithVisibilityResults",
 		tweet,
 		...(p.notice ? { softInterventionPivot: noticePivot(p.notice) } : {}),
-		...(p.reply_limited ? { limitedActionResults: {
-			limited_actions: [
-				{
-					action: "Reply",
-					prompt: {
-						__typename: "CtaLimitedActionPrompt",
-						cta_type: "SeeConversation",
-						headline: { text: "Who can reply?", entities: [] },
-						subtext: { text: audience + (p.conversation_policy === "ByInvitation" ? "" : ". Accounts mentioned in the original post can also reply."), entities: [] },
+		...(p.reply_limited ? {
+			limitedActionResults: {
+				limited_actions: [
+					{
+						action: "Reply",
+						prompt: {
+							__typename: "CtaLimitedActionPrompt",
+							cta_type: "SeeConversation",
+							headline: { text: "Who can reply?", entities: [] },
+							subtext: { text: audience + (p.conversation_policy === "ByInvitation" ? "" : ". Accounts mentioned in the original post can also reply."), entities: [] },
+						},
 					},
-				},
-			],
-		} } : {}),
+				],
+			}
+		} : {}),
 	};
 }
 
@@ -574,23 +576,31 @@ function plainTweet(p: PostRow, withTypename: boolean): Record<string, unknown> 
 	const quoteLink = p.quoted && permalink(p.quoted);
 	return {
 		...(withTypename ? { __typename: "Tweet" } : {}),
-		...(p.communityNote ? { has_birdwatch_notes: true, birdwatch_pivot: {
-			title: "Readers added context they thought people might want to know", shorttitle: "Readers added context",
-			subtitle: noteText(p.communityNote.text), iconType: "BirdwatchLevelHigh", footerIconType: "BirdwatchLevelHigh", visualStyle: "Default",
-			destinationUrl: `/i/birdwatch/n/${p.communityNote.id}`, note: { rest_id: p.communityNote.id, language: "en", is_community_note_translatable: false, grok_translated_community_note_with_availability: { is_available: false } },
-			footer: { text: `Context is written by people who use ${settings().instance_name}, and appears when rated helpful by others.`, entities: [] },
-			callToAction: { destinationUrl: `/i/birdwatch/n/${p.communityNote.id}`, prompt: "Is this note helpful?", title: "Rate it" },
-		} } : {}),
+		...(p.communityNote ? {
+			has_birdwatch_notes: true, birdwatch_pivot: {
+				title: "Readers added context they thought people might want to know", shorttitle: "Readers added context",
+				subtitle: noteText(p.communityNote.text), iconType: "BirdwatchLevelHigh", footerIconType: "BirdwatchLevelHigh", visualStyle: "Default",
+				destinationUrl: `/i/birdwatch/n/${p.communityNote.id}`, note: { rest_id: p.communityNote.id, language: "en", is_community_note_translatable: false, grok_translated_community_note_with_availability: { is_available: false } },
+				footer: { text: `Context is written by people who use ${settings().instance_name}, and appears when rated helpful by others.`, entities: [] },
+				callToAction: { destinationUrl: `/i/birdwatch/n/${p.communityNote.id}`, prompt: "Is this note helpful?", title: "Rate it" },
+			}
+		} : {}),
 		...(p.quoted ? { quoted_status_result: { result: tweetResult(p.quoted) } } : {}),
 		...(p.article ? { article: { article_results: { result: p.article } } } : {}),
 		...(p.community ? { community_results: { result: p.community } } : {}),
 		...(p.conversationCard ? { xitter_conversation_card: p.conversationCard } : {}),
 		...(conversation ? { card: conversation } : p.poll ? { card: p.poll } : p.linkCard ? { card: p.linkCard } : {}),
-		...(long ? { note_tweet: { is_expandable: true, note_tweet_results: { result: {
-			id: globalId("NoteTweet", p.id),
-			text: p.text,
-			entity_set: { hashtags: allTags, user_mentions: allMentions, urls: linkEntities(p.text, undefined, p.localLinks), symbols: [] },
-		} } } } : {}),
+		...(long ? {
+			note_tweet: {
+				is_expandable: true, note_tweet_results: {
+					result: {
+						id: globalId("NoteTweet", p.id),
+						text: p.text,
+						entity_set: { hashtags: allTags, user_mentions: allMentions, urls: linkEntities(p.text, undefined, p.localLinks), symbols: [] },
+					}
+				}
+			}
+		} : {}),
 		cashtag_attachments: [],
 		core: { user_results: { result: userResult(p.author) } },
 		edit_control: editControl(p),
@@ -622,16 +632,16 @@ function plainTweet(p: PostRow, withTypename: boolean): Record<string, unknown> 
 			id_str: p.id,
 			...(p.reply_to_id
 				? {
-						in_reply_to_status_id_str: p.reply_to_id,
-						...(p.reply_user_id ? { in_reply_to_screen_name: p.reply_screen_name, in_reply_to_user_id_str: p.reply_user_id } : {}),
-					}
+					in_reply_to_status_id_str: p.reply_to_id,
+					...(p.reply_user_id ? { in_reply_to_screen_name: p.reply_screen_name, in_reply_to_user_id_str: p.reply_user_id } : {}),
+				}
 				: {}),
 			is_quote_status: !!p.quote_id || !!p.quoted,
 			...(p.quoted && quoteLink
 				? {
-						quoted_status_id_str: p.quoted.id,
-						quoted_status_permalink: { url: quoteLink, expanded: quoteLink, display: quoteLink.replace(/^https?:\/\//, "") },
-					}
+					quoted_status_id_str: p.quoted.id,
+					quoted_status_permalink: { url: quoteLink, expanded: quoteLink, display: quoteLink.replace(/^https?:\/\//, "") },
+				}
 				: {}),
 			lang: guessLang(p.text),
 			quote_count: p.quote_count,
@@ -644,16 +654,16 @@ function plainTweet(p: PostRow, withTypename: boolean): Record<string, unknown> 
 		// "Only people in @owner's Circle can see this post"; the client reads the owner's handle
 		...(p.circle_owner
 			? {
-					trusted_friends_info_result: {
-						__typename: "ApiTrustedFriendsInfo",
-						owner_results: {
-							result:
-								p.circle_owner.id === p.author.id
-									? userResult(p.author)
-									: { __typename: "User", id: globalId("User", p.circle_owner.id), rest_id: p.circle_owner.id, core: { screen_name: p.circle_owner.screen_name, name: p.circle_owner.screen_name }, legacy: { screen_name: p.circle_owner.screen_name, name: p.circle_owner.screen_name } },
-						},
+				trusted_friends_info_result: {
+					__typename: "ApiTrustedFriendsInfo",
+					owner_results: {
+						result:
+							p.circle_owner.id === p.author.id
+								? userResult(p.author)
+								: { __typename: "User", id: globalId("User", p.circle_owner.id), rest_id: p.circle_owner.id, core: { screen_name: p.circle_owner.screen_name, name: p.circle_owner.screen_name }, legacy: { screen_name: p.circle_owner.screen_name, name: p.circle_owner.screen_name } },
 					},
-				}
+				},
+			}
 			: {}),
 		unmention_data: {},
 		unmention_info: {},
@@ -813,12 +823,12 @@ export const selfThreadEntry = (
 			})),
 			...(opts.hasMore
 				? {
-						footer: {
-							displayType: "Classic",
-							text: "Show this thread",
-							landingUrl: { url: `https://x.com/${root.author.screen_name}/status/${root.id}`, urlType: "ExternalUrl" },
-						},
-					}
+					footer: {
+						displayType: "Classic",
+						text: "Show this thread",
+						landingUrl: { url: `https://x.com/${root.author.screen_name}/status/${root.id}`, urlType: "ExternalUrl" },
+					},
+				}
 				: {}),
 			metadata: { conversationMetadata: { allTweetIds, enableDeduplication: true } },
 		},
@@ -862,20 +872,20 @@ export const threadItems = (root: string, items: ThreadItem[], more?: ThreadMore
 	})),
 	...(more
 		? [
-				{
-					entryId: `conversationthread-${root}-cursor-showmore-${more.after}`,
-					item: {
-						itemContent: {
-							__typename: "TimelineTimelineCursor",
-							itemType: "TimelineTimelineCursor",
-							cursorType: "ShowMore",
-							value: more.value,
-							displayTreatment: { actionText: "Show replies" },
-						},
+			{
+				entryId: `conversationthread-${root}-cursor-showmore-${more.after}`,
+				item: {
+					itemContent: {
+						__typename: "TimelineTimelineCursor",
+						itemType: "TimelineTimelineCursor",
+						cursorType: "ShowMore",
+						value: more.value,
+						displayTreatment: { actionText: "Show replies" },
 					},
-					...treeDisplay(root, more.after),
 				},
-			]
+				...treeDisplay(root, more.after),
+			},
+		]
 		: []),
 ];
 export const threadEntry = (root: string, items: ThreadItem[], sortIndex: string, more?: ThreadMore) => ({

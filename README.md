@@ -10,6 +10,7 @@ You can find upstream's source [here](https://github.com/Xittered/xitter) or on 
 - updates ``scripts/``to sucessfully build workflows within this repo.
 - groups self-threads (an author replying to their own posts) together as connected conversation modules on Home, Profile, List, and Community timelines.
 - counts reposts toward an account's total posts.
+- references to "Premium" accounts are changed to "Verified" accounts
 
 ---
 
