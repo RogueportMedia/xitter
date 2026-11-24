@@ -42,11 +42,27 @@ async function pageAsGuest(): Promise<string> {
 	return html;
 }
 
+const CHAT_EMBED_BASE = "https://abs.twimg.com/x-web/xchat/embed/";
+const CHAT_EMBED_URL = /^https:\/\/abs\.twimg\.com\/x-web\/xchat\/embed\/[0-9a-f]+\/$/;
+
+// chat.x.com previously included the build hash in publicPath and now puts it
+// at the start of remoteEntry (while mf-manifest.json still lives under the hash)
+export function chatBuildFromManifest(manifest: unknown): string | undefined {
+	const meta = (manifest as any)?.metaData;
+	const path = typeof meta?.publicPath === "string" ? meta.publicPath : undefined;
+	if (!path) return undefined;
+	if (CHAT_EMBED_URL.test(path)) return path;
+	if (path !== CHAT_EMBED_BASE) return undefined;
+	const entryPath = typeof meta?.remoteEntry?.path === "string" ? meta.remoteEntry.path.replace(/^\/|\/$/g, "") : "";
+	const entryName = typeof meta?.remoteEntry?.name === "string" ? meta.remoteEntry.name : "";
+	const sha = /^[0-9a-f]+$/.test(entryPath) ? entryPath : /^([0-9a-f]+)\//.exec(entryName)?.[1];
+	return sha ? `${path}${sha}/` : undefined;
+}
+
 // the signed-in page names the chat build in its metadata; the guest page doesn't
 async function chatBuildAddress(): Promise<string | undefined> {
 	const res = await fetch("https://chat.x.com/embed-v1.json", { headers: { "user-agent": UA } }).catch(() => undefined);
-	const path = res?.ok ? ((await res.json().catch(() => undefined)) as any)?.metaData?.publicPath : undefined;
-	return typeof path === "string" && /^https:\/\/abs\.twimg\.com\/x-web\/xchat\/embed\/[0-9a-f]+\/$/.test(path) ? path : undefined;
+	return res?.ok ? chatBuildFromManifest(await res.json().catch(() => undefined)) : undefined;
 }
 
 function pageFromHar(file: string): string {
@@ -83,42 +99,44 @@ function snapshot(html: string): { build: Build; runtime: string } {
 	};
 }
 
-const token = arg("--token") ?? process.env.TWITTER_AUTH_TOKEN;
-const harFile = arg("--har");
-const guest = !token && !harFile && (process.argv.includes("--latest") || !existsSync(BUILD_FILE));
-if (token || harFile || guest) {
-	const { build, runtime } = snapshot(harFile ? pageFromHar(harFile) : token ? await pageFromToken(token) : await pageAsGuest());
-	if (!build.meta.xchatEmbedBuild) {
-		const chat = await chatBuildAddress();
-		if (chat) build.meta.xchatEmbedBuild = chat;
-		else console.log("no chat build address found; chat won't load");
+if (import.meta.main) {
+	const token = arg("--token") ?? process.env.TWITTER_AUTH_TOKEN;
+	const harFile = arg("--har");
+	const guest = !token && !harFile && (process.argv.includes("--latest") || !existsSync(BUILD_FILE));
+	if (token || harFile || guest) {
+		const { build, runtime } = snapshot(harFile ? pageFromHar(harFile) : token ? await pageFromToken(token) : await pageAsGuest());
+		if (!build.meta.xchatEmbedBuild) {
+			const chat = await chatBuildAddress();
+			if (chat) build.meta.xchatEmbedBuild = chat;
+			else console.log("no chat build address found; chat won't load");
+		}
+		mkdirSync(CLIENT_DIR, { recursive: true });
+		writeFileSync(BUILD_FILE, JSON.stringify(build, null, "\t"));
+		writeFileSync(RUNTIME_FILE, runtime);
+		console.log(`pinned build ${build.sha.slice(0, 12)}: ${build.scripts.length} entry scripts, ${Object.keys(build.featureSwitch.config).length} feature switches`);
 	}
-	mkdirSync(CLIENT_DIR, { recursive: true });
-	writeFileSync(BUILD_FILE, JSON.stringify(build, null, "\t"));
-	writeFileSync(RUNTIME_FILE, runtime);
-	console.log(`pinned build ${build.sha.slice(0, 12)}: ${build.scripts.length} entry scripts, ${Object.keys(build.featureSwitch.config).length} feature switches`);
+
+	// entry scripts, plus every file a capture saw if samples/ exists
+	const build: Build = JSON.parse(readFileSync(BUILD_FILE, "utf8"));
+	const paths = new Set(build.scripts);
+	if (existsSync("samples"))
+		for (const d of readdirSync("samples")) {
+			const list = join("samples", d, "_client-files.txt");
+			if (!existsSync(list)) continue;
+			for (const line of readFileSync(list, "utf8").split("\n"))
+				if (line.startsWith(`${CDN_ORIGIN}/`)) paths.add(new URL(line.trim()).pathname);
+		}
+
+	const queue = [...paths].filter((p) => !readCached(p));
+	let failed = 0;
+	await Promise.all(
+		Array.from({ length: 8 }, async () => {
+			for (let p = queue.pop(); p; p = queue.pop())
+				if (!(await getClientFile(p))) {
+					failed++;
+					console.log(`failed: ${p}`);
+				}
+		}),
+	);
+	console.log(`${paths.size} files known, ${paths.size - failed} in the archive; the rest load on first use`);
 }
-
-// entry scripts, plus every file a capture saw if samples/ exists
-const build: Build = JSON.parse(readFileSync(BUILD_FILE, "utf8"));
-const paths = new Set(build.scripts);
-if (existsSync("samples"))
-	for (const d of readdirSync("samples")) {
-		const list = join("samples", d, "_client-files.txt");
-		if (!existsSync(list)) continue;
-		for (const line of readFileSync(list, "utf8").split("\n"))
-			if (line.startsWith(`${CDN_ORIGIN}/`)) paths.add(new URL(line.trim()).pathname);
-	}
-
-const queue = [...paths].filter((p) => !readCached(p));
-let failed = 0;
-await Promise.all(
-	Array.from({ length: 8 }, async () => {
-		for (let p = queue.pop(); p; p = queue.pop())
-			if (!(await getClientFile(p))) {
-				failed++;
-				console.log(`failed: ${p}`);
-			}
-	}),
-);
-console.log(`${paths.size} files known, ${paths.size - failed} in the archive; the rest load on first use`);
