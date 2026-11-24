@@ -152,6 +152,12 @@ const CHAT_RULES: [RegExp, string][] = [
 	// the media host for chat attachments; the main client sends requests to
 	// this host without auth headers, so there it must keep its own name
 	[/https:\/\/ton\.x\.com/g, PUBLIC_ORIGIN],
+	// newer chat builds refuse Juicebox registration unless thresholds are 3/2
+	// with an HSM realm; Xitter runs one software realm (thresholds 1/1)
+	[
+		/if\(([\w$]+\.[\w$]+)!==3\)([\w$]+)=[`"']register_threshold [`"']\+\1\+[`"'] != 3[`"'];else if\(([\w$]+\.[\w$]+)!==2\)\2=[`"']recover_threshold [`"']\+\3\+[`"'] != 2[`"'];else if\([\w$]+>=2\)\2=[`"']recovery must include at least one HSM[`"'];else /g,
+		"if($1<1)$2=`register_threshold `+$1+` < 1`;else if($3<1)$2=`recover_threshold `+$3+` < 1`;else ",
+	],
 ];
 
 // The translation files hold most sentences the client shows ("Sign up for X";

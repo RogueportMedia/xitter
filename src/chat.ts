@@ -760,6 +760,16 @@ export const chatHandlers: Record<string, (viewer: Viewer, vars: Vars) => Promis
 				identity_public_key_signature = excluded.identity_public_key_signature, registration_method = excluded.registration_method`;
 		return { data: { user_add_public_key: { __typename: "AddPublicKeyResponse", error_code: null, version, token_map: tokenMap(v.id) } } };
 	},
+	DeleteXChatPublicKeyMutation: async (v, vars) => {
+		const version = String(vars.version ?? "");
+		if (!/^\d{1,19}$/.test(version) || BigInt(version) > 9223372036854775807n)
+			return { data: { user_delete_public_key: { __typename: "DeletePublicKeyResponse", error_code: "InvalidVersion" } } };
+		if (vars.clearSigningPublicKeyOnly)
+			await sql`update chat_keys set signing_public_key = '', identity_public_key_signature = '' where user_id = ${v.id}::bigint and version = ${version}::bigint`;
+		else
+			await sql`delete from chat_keys where user_id = ${v.id}::bigint and version = ${version}::bigint`;
+		return { data: { user_delete_public_key: { __typename: "DeletePublicKeyResponse", error_code: null } } };
+	},
 	UpdateXChatUserRealmStateMutation: () => ({ data: { xchat_update_user_key_version_realm_state: { __typename: "UpdateRealmStateResponse", error_code: null } } }),
 
 	GetUsersByIdsForXChat: async (v, vars) => ({
