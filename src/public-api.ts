@@ -15,6 +15,7 @@ import { callOperation } from "./graphql";
 import { isId, newId } from "./ids";
 import { absolute, mediaUpload, mediaUrl, posterUrl } from "./media";
 import { type PostRow, badgeList, isOrganization, isVerified, shownVerifiedType, verifiedSince } from "./model";
+import { shownSource } from "./platforms";
 import { PostError, feed, getPost, likerIds, postsByIds, replies, type FeedItem } from "./posts";
 import { setProfileImage, updatePronouns, updateProfileText } from "./rest";
 import { ReplyControlError } from "./reply-controls";
@@ -135,10 +136,11 @@ function userJson(u: User) {
 	};
 }
 
-function postJson(p: PostRow, repostBy?: { by: User; created_at: Date }) {
+export function postJson(p: PostRow, repostBy?: { by: User; created_at: Date }) {
 	return {
 		id: p.id,
 		text: p.text,
+		source: shownSource(p.source, p.author.instance),
 		created_at: iso(p.created_at),
 		edited_at: iso(p.edited_at),
 		url: `${PUBLIC_ORIGIN}/${p.author.screen_name}/status/${p.id}`,

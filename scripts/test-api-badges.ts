@@ -102,15 +102,20 @@ try {
 		[[], [], null, null, null, false, null, false],
 	);
 
-	// the same shape on post authors
+	// the same shape on post authors, plus post source labels
 	const post = newId();
-	await sql`insert into posts(id, user_id, text, conversation_id) values(${post}::bigint, ${ids.person}::bigint, 'hello', ${post}::bigint)`;
-	assert.equal((await get(token, `/posts/${post}`)).author.affiliations[0]?.screen_name, name("org"), "post authors carry affiliations");
+	await sql`insert into posts(id, user_id, text, conversation_id, source) values(${post}::bigint, ${ids.person}::bigint, 'hello', ${post}::bigint, 'Xitter for Web')`;
+	const fetchedPost = await get(token, `/posts/${post}`);
+	assert.equal(fetchedPost.author.affiliations[0]?.screen_name, name("org"), "post authors carry affiliations");
+	assert.equal(fetchedPost.source, "Xitter for Web", "local post carries its source label");
 
 	// an account from another instance: its verified date arrives with it, and it wears the globe
 	const remoteVerified = "2024-11-05T08:30:00.000Z";
 	const local = await applyUser(peer, { id: remoteId, screen_name: `rem_${tag}`, name: "Remote", verified_type: "blue", verified_at: remoteVerified, created_at: "2024-01-01T00:00:00.000Z" });
 	assert(local, "remote account stored");
+	const remotePost = newId();
+	await sql`insert into posts(id, user_id, text, conversation_id, source) values(${remotePost}::bigint, ${local}::bigint, 'from afar', ${remotePost}::bigint, 'Xitter API')`;
+	assert.equal((await get(token, `/posts/${remotePost}`)).source, `Xitter API - ${peer}`, "federated post source names its home instance");
 	const r = await get(token, `/users/${encodeURIComponent(`rem_${tag}@${peer}`)}`);
 	assert.deepEqual([r.verified, r.verified_since], [true, remoteVerified], "verified_since federates");
 	assert(r.badges.some((b: { url: string }) => b.url.includes("/public/globe.svg")), "another instance's account wears the globe");

@@ -72,6 +72,7 @@ check(up.status === 201 && !!up.json.data?.media_id, "POST /media uploads the bo
 const post = await a("POST", "/posts", { text: `api test ${Date.now()}`, media_ids: [up.json.data?.media_id] });
 const pid = post.json.data?.id;
 check(post.status === 201 && post.json.data?.media?.length === 1, "POST /posts with an image", post.json);
+check(post.json.data?.source === "Xitter API", "POST /posts returns its source label", post.json.data?.source);
 const avatarUp = await a("POST", "/media", readFileSync(image), image.endsWith(".png") ? "image/png" : "image/jpeg");
 const withAvatar = await a("PATCH", "/me", { avatar_media_id: avatarUp.json.data?.media_id });
 check(withAvatar.status === 200 && String(withAvatar.json.data?.avatar_url).includes(`/media/${avatarUp.json.data?.media_id}`), "PATCH /me sets the avatar from an upload", withAvatar.json);
@@ -99,6 +100,7 @@ check((await b("DELETE", `/posts/${pid}/bookmark`)).json.data?.viewer?.bookmarke
 // reads
 const one = await b("GET", `/posts/${pid}`);
 check(one.status === 200 && one.json.data?.author?.screen_name?.toLowerCase() === nameA.toLowerCase(), "GET /posts/{id}");
+check(one.json.data?.source === "Xitter API", "GET /posts/{id} returns its source label", one.json.data?.source);
 const replies = await a("GET", `/posts/${pid}/replies`);
 check(replies.json.data?.some((p: any) => p.id === reply.json.data?.id), "GET /posts/{id}/replies");
 const onlyReplies = await a("GET", `/users/${nameB}/posts?replies=only&limit=20`);
