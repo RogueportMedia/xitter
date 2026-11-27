@@ -28,7 +28,7 @@ import { startSweep, sweepState } from "./media-compress";
 import { DEFAULT_GUIDE, PROMPT_MAX, claudeModKey } from "./claude-mod";
 import { FEATURES, NAME_MAX, type Feature, type SignupMode, allSettings, setSetting, settings } from "./settings";
 import { SLOTS, brandingState, resetBranding, saveBranding } from "./branding";
-import { createPlatform, renameWebSource } from "./platforms";
+import { createPlatform, renamePlatform, renameWebSource, validPlatformLabel } from "./platforms";
 import { TopicError, deleteTopic, listTopics, saveTopic } from "./topics";
 import { CardError, deleteCard, listCards, saveCard } from "./explore-cards";
 import { mailEnabled, mailFrom, sendMail } from "./mail";
@@ -69,7 +69,7 @@ export const AUDIT_ACTIONS = [
 	"federation_accept_key", "federation_block", "federation_drop_media", "federation_pull", "federation_purge", "federation_unblock", "hosting_adopt",
 	"hosting_approve", "hosting_reject", "hosting_revoke", "invite_quota", "money_adjust", "money_remote_shop_update", "money_reverse",
 	"money_settings", "money_shop_announcement_clear", "money_shop_item_create", "money_shop_item_update", "money_shop_settings", "org_badge",
-	"release_identity", "remove_affiliate", "rename_sticker_pack", "reset_branding", "reset_decor", "reset_password", "resolve_appeal",
+	"release_identity", "remove_affiliate", "rename_platform", "rename_sticker_pack", "reset_branding", "reset_decor", "reset_password", "resolve_appeal",
 	"resolve_errors", "review_community_note_appeal", "revoke_api_tokens", "revoke_invite", "revoke_platform", "revoke_session", "revoke_strike",
 	"rollback_client", "save_automod", "save_operations", "save_security", "save_settings", "self_update", "self_update_rollback", "send_staff_message",
 	"send_test_mail", "set_allow_affiliates", "set_badge", "set_badges", "set_clients", "set_feature_switch", "set_flag", "set_never_sensitive", "set_notes_access", "set_post_counts",
@@ -257,10 +257,19 @@ const ACTIONS: Record<string, Action> = {
 	platforms: { role: "admin", run: async () => ({ platforms: await sql`select id::text, label, revoked, created_at from client_platforms order by id desc` }) },
 	createPlatform: { role: "admin", run: async (a, b) => {
 		const label = typeof b.label === "string" ? b.label.trim() : "";
-		if (!label || [...label].length > 80 || /[\x00-\x1f\x7f]/.test(label)) throw new AdminError("Enter a platform label of 1–80 characters.");
+		if (!validPlatformLabel(label)) throw new AdminError("Enter a platform label of 1–80 characters.");
 		const result = await createPlatform(label, a.id);
 		await audit(a, "create_platform", result.id, { label });
 		return result;
+	} },
+	renamePlatform: { role: "admin", run: async (a, b) => {
+		const id = idOf(b.id);
+		const label = typeof b.label === "string" ? b.label.trim() : "";
+		if (!validPlatformLabel(label)) throw new AdminError("Enter a platform label of 1–80 characters.");
+		const result = await renamePlatform(id, label);
+		if (!result.ok) throw new AdminError(result.reason === "missing" ? "No such platform." : "Revoked platforms can't be renamed.", result.reason === "missing" ? 404 : 400);
+		if (result.previous !== label) await audit(a, "rename_platform", id, { from: result.previous, label });
+		return { id, label };
 	} },
 	revokePlatform: { role: "admin", run: async (a, b) => {
 		const id = idOf(b.id);

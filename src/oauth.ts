@@ -24,6 +24,10 @@ const code = () => randomBytes(32).toString("base64url");
 const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type", "access-control-allow-methods": "POST, OPTIONS", "cache-control": "no-store" };
 const oauthError = (error: string, status = 400) => Response.json({ error }, { status, headers: cors });
 
+export function validAppName(value: string): boolean {
+	return !!value && [...value].length <= 80 && !/[\x00-\x1f\x7f]/.test(value);
+}
+
 export function validRedirect(value: string): boolean {
 	if (!value || value.length > 2048) return false;
 	try {
@@ -255,7 +259,10 @@ const ICON_CSS = `
 .named{display:flex;align-items:center;gap:12px;min-width:0}
 .icon{width:40px;height:40px;border-radius:10px;flex:none;display:grid;place-items:center;background:var(--accent-fill,var(--accent));color:var(--accent-text,#fff);font-weight:800;object-fit:cover}
 img.icon{background:var(--surface)}
-label.file{flex:1 1 220px}
+.card form.row{align-items:flex-end}
+.card form.row button{margin-bottom:4px}
+label.field,label.file{flex:1 1 220px;margin:0;display:grid;gap:4px}
+label.field input,label.file input{width:100%}
 `;
 
 const CONSENT_CSS = `
@@ -324,7 +331,7 @@ async function developerPage(req: Request, viewer: Viewer, message = ""): Promis
 	return accountPage({ req, viewer, title: "Developer apps", referrer: "same-origin", css: ICON_CSS, body: `<h1>Developer apps</h1>
 <p>Register a public app to use OAuth authorization-code with PKCE (S256). HTTPS redirect URLs and local loopback URLs are supported.</p>
 ${message ? `<p>${esc(message)}</p>` : ""}<form method="post">${hidden}<input type="hidden" name="action" value="register"><label>App name<input name="name" maxlength="80" required></label><label>Exact redirect URL<input name="redirect_uri" type="url" maxlength="2048" required></label><button>Register app</button></form>
-${clients.map((c) => `<div class="card"><div class="named">${appIcon(c.name, c.icon_at ? iconUrl(c.id, c.icon_at) : null)}<b>${esc(c.name)}</b></div><p>Client ID: <code>${c.id}</code></p><p>Redirect: <code>${esc(c.redirect_uri)}</code></p><p>${c.revoked ? "Revoked" : "Active"}</p>${c.revoked ? "" : `<form method="post" enctype="multipart/form-data" class="row">${hidden}<input type="hidden" name="action" value="icon"><input type="hidden" name="id" value="${c.id}"><label class="file">Icon (PNG, JPEG, WebP or GIF, up to 256 KB, square works best)<input type="file" name="icon" accept="image/png,image/jpeg,image/webp,image/gif" required></label><button class="secondary">${c.icon_at ? "Change icon" : "Set icon"}</button></form>${c.icon_at ? `<form method="post">${hidden}<input type="hidden" name="action" value="removeIcon"><input type="hidden" name="id" value="${c.id}"><button class="secondary">Remove icon</button></form>` : ""}<form method="post">${hidden}<input type="hidden" name="action" value="revoke"><input type="hidden" name="id" value="${c.id}"><button class="danger">Revoke app</button></form>`}</div>`).join("")}
+${clients.map((c) => `<div class="card"><div class="named">${appIcon(c.name, c.icon_at ? iconUrl(c.id, c.icon_at) : null)}<b>${esc(c.name)}</b></div><p>Client ID: <code>${c.id}</code></p><p>Redirect: <code>${esc(c.redirect_uri)}</code></p><p>${c.revoked ? "Revoked" : "Active"}</p>${c.revoked ? "" : `<form method="post" class="row">${hidden}<input type="hidden" name="action" value="rename"><input type="hidden" name="id" value="${c.id}"><label class="field">App name<input name="name" value="${esc(c.name)}" maxlength="80" required></label><button class="secondary">Rename</button></form><form method="post" enctype="multipart/form-data" class="row">${hidden}<input type="hidden" name="action" value="icon"><input type="hidden" name="id" value="${c.id}"><label class="file">Icon (PNG, JPEG, WebP or GIF, up to 256 KB, square works best)<input type="file" name="icon" accept="image/png,image/jpeg,image/webp,image/gif" required></label><button class="secondary">${c.icon_at ? "Change icon" : "Set icon"}</button></form>${c.icon_at ? `<form method="post">${hidden}<input type="hidden" name="action" value="removeIcon"><input type="hidden" name="id" value="${c.id}"><button class="secondary">Remove icon</button></form>` : ""}<form method="post">${hidden}<input type="hidden" name="action" value="revoke"><input type="hidden" name="id" value="${c.id}"><button class="danger">Revoke app</button></form>`}</div>`).join("")}
 <p><a href="/api">API and OAuth documentation</a></p>` });
 }
 
@@ -360,9 +367,22 @@ export async function developerAppsRoute(req: Request, viewer: Viewer): Promise<
 		const done = await sql`update oauth_clients set icon = ${bytes}, icon_mime = ${image.mime}, icon_at = now() where id = ${id}::bigint and owner_id = ${viewer.id}::bigint and not revoked returning id`;
 		return developerPage(req, viewer, done.length ? "Icon saved." : "No such app.");
 	}
+	if (value(f, "action") === "rename") {
+		const id = value(f, "id");
+		if (!isId(id)) return new Response("Invalid app.", { status: 400 });
+		const name = value(f, "name").trim();
+		if (!validAppName(name)) return developerPage(req, viewer, "Use an app name of 1–80 characters.");
+		const done = await sql.begin(async (tx) => {
+			const rows = await tx`update oauth_clients set name = ${name} where id = ${id}::bigint and owner_id = ${viewer.id}::bigint and not revoked returning id`;
+			if (!rows.length) return false;
+			await tx`update api_tokens set name = left(${name}, 40) where client_id = ${id}::bigint`;
+			return true;
+		});
+		return developerPage(req, viewer, done ? "App renamed." : "No such app.");
+	}
 	if (value(f, "action") !== "register") return new Response("Invalid action.", { status: 400 });
 	const name = value(f, "name").trim(), redirect = value(f, "redirect_uri").trim();
-	if (!name || [...name].length > 80 || !validRedirect(redirect)) return developerPage(req, viewer, "Use a name and an exact HTTPS or local loopback redirect URL.");
+	if (!validAppName(name) || !validRedirect(redirect)) return developerPage(req, viewer, "Use a name and an exact HTTPS or local loopback redirect URL.");
 	const made = await sql.begin(async (tx) => {
 		await tx`select id from users where id = ${viewer.id}::bigint for update`;
 		const [{ count }] = await tx`select count(*)::int as count from oauth_clients where owner_id = ${viewer.id}::bigint and not revoked`;

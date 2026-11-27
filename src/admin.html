@@ -1501,12 +1501,17 @@ const RENDER = {
 			'<div class="scroll">' + (platforms.length
 				? '<table class="table"><tr><th>Shown as</th><th>Made</th><th>State</th><th></th></tr>' +
 					platforms.map((p) => "<tr><td>" + esc(p.label) + '</td><td class="small dim">' + esc(when(p.created_at)) + "</td><td>" + (p.revoked ? '<span class="pill suspended">revoked</span>' : '<span class="pill">active</span>') +
-						"</td><td>" + (can("admin") && !p.revoked ? '<button class="btn danger" data-revoke="' + esc(p.id) + '">Revoke</button>' : "") + "</td></tr>").join("") + "</table>"
+						"</td><td>" + (can("admin") && !p.revoked ? '<div class="row"><button class="btn" data-rename="' + esc(p.id) + '" data-label="' + esc(p.label) + '">Rename</button><button class="btn danger" data-revoke="' + esc(p.id) + '">Revoke</button></div>' : "") + "</td></tr>").join("") + "</table>"
 				: '<div class="empty">No apps yet. Posts from the web app show "{{instance}} for Web".</div>') + "</div>";
 		if ($("#ac")) $("#ac").onclick = () => act(async () => {
 			const r = await api("createPlatform", { label: $("#al").value });
 			await route();
 			$("#asecret").innerHTML = '<div class="secret">Token for ' + esc(r.label) + ': <span class="code">' + esc(r.token) + '</span><br><span class="dim small">Shown once. The app sends it as "Authorization: Bearer …".</span></div>';
+		});
+		main.querySelectorAll("[data-rename]").forEach((b) => b.onclick = () => {
+			const label = prompt("New name for the app", b.dataset.label);
+			if (label === null || label.trim() === b.dataset.label) return;
+			act(() => api("renamePlatform", { id: b.dataset.rename, label }), "Renamed").then(route);
 		});
 		main.querySelectorAll("[data-revoke]").forEach((b) => b.onclick = async () => {
 			if (!(await ask("Revoke this token? The app's posts keep their label, but it can't post any more."))) return;

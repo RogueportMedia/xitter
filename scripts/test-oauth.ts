@@ -4,7 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { sql } from "../src/db";
 import { newId } from "../src/ids";
 import { type Viewer, sessionKey } from "../src/auth";
-import { connectedAppsRoute, developerAppsRoute, oauthAppIcon, oauthAuthorize, oauthToken, validRedirect } from "../src/oauth";
+import { connectedAppsRoute, developerAppsRoute, oauthAppIcon, oauthAuthorize, oauthToken, validAppName, validRedirect } from "../src/oauth";
 import { publicApi } from "../src/public-api";
 import { PUBLIC_ORIGIN } from "../src/config";
 import { fetcher } from "../src/oauth-metadata";
@@ -77,7 +77,26 @@ try {
 	assert.equal((await api("GET", "/me", issued.access_token)).status, 401, "user revocation takes effect");
 	const writeGrant = await approve(client.id, "write");
 	const writeToken = (await (await exchange(client.id, writeGrant)).json()).access_token;
+	// renaming a developer app: CSRF, validation, ownership, token/page updates, and revoked refusal
+	assert(!validAppName("") && !validAppName("a".repeat(81)) && !validAppName("bad\nname") && validAppName("Renamed app"));
+	assert.equal((await developerAppsRoute(postForm("/account/apps/developer", { csrf: "wrong", action: "rename", id: client.id, name: "Bad" }), appOwner)).status, 403, "rename needs CSRF");
+	assert.equal((await developerAppsRoute(postForm("/account/apps/developer", { csrf: appOwner.csrf, action: "rename", id: "nope", name: "Bad" }), appOwner)).status, 400, "rename rejects bad id");
+	assert((await (await developerAppsRoute(postForm("/account/apps/developer", { csrf: appOwner.csrf, action: "rename", id: client.id, name: "   " }), appOwner)).text()).includes("1–80 characters"), "blank name refused");
+	assert((await (await developerAppsRoute(postForm("/account/apps/developer", { csrf: appOwner.csrf, action: "rename", id: client.id, name: "a".repeat(81) }), appOwner)).text()).includes("1–80 characters"), "overlong name refused");
+	assert((await (await developerAppsRoute(postForm("/account/apps/developer", { csrf: user.csrf, action: "rename", id: client.id, name: "Stolen" }), user)).text()).includes("No such app."), "only the owner can rename an app");
+	assert.equal((await sql`select name from oauth_clients where id = ${client.id}::bigint`)[0].name, "Example app");
+	const renamed = await developerAppsRoute(postForm("/account/apps/developer", { csrf: appOwner.csrf, action: "rename", id: client.id, name: "  Renamed app  " }), appOwner);
+	assert.equal(renamed.status, 200);
+	const renamedHtml = await renamed.text();
+	assert(renamedHtml.includes("App renamed.") && renamedHtml.includes("Renamed app"), "developer page confirms and shows the new name");
+	assert.equal((await sql`select name from oauth_clients where id = ${client.id}::bigint`)[0].name, "Renamed app");
+	assert.equal((await sql`select name from api_tokens where user_id = ${account}::bigint and client_id = ${client.id}::bigint`)[0].name, "Renamed app", "existing grant token name stays in step");
+	assert((await (await connectedAppsRoute(new Request(`${origin}/account/apps`), user)).text()).includes("Renamed app"), "Connected apps shows the new name");
+	const renamedConsent = new URL(`${origin}/oauth/authorize?${new URLSearchParams({ response_type: "code", client_id: client.id, redirect_uri: redirect, state: "random-state-123", scope: "read", code_challenge: "a".repeat(43), code_challenge_method: "S256" })}`);
+	assert((await (await oauthAuthorize(new Request(renamedConsent), renamedConsent, user)).text()).includes("Authorize Renamed app"), "consent page shows the new name");
 	assert.equal((await developerAppsRoute(postForm("/account/apps/developer", { csrf: appOwner.csrf, action: "revoke", id: client.id }), appOwner)).status, 200);
+	assert((await (await developerAppsRoute(postForm("/account/apps/developer", { csrf: appOwner.csrf, action: "rename", id: client.id, name: "After revoke" }), appOwner)).text()).includes("No such app."), "revoked app cannot be renamed");
+	assert.equal((await sql`select name from oauth_clients where id = ${client.id}::bigint`)[0].name, "Renamed app");
 	assert.equal((await api("GET", "/me", writeToken)).status, 401, "developer revocation takes effect");
 
 	// an app identified by its client ID metadata document, never registered here

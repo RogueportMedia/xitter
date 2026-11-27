@@ -25,11 +25,23 @@ export async function renameWebSource(from: string, to: string) {
 
 const hash = (token: string) => createHash("sha256").update(token).digest("hex");
 
+export const validPlatformLabel = (value: string) => !!value && [...value].length <= 80 && !/[\x00-\x1f\x7f]/.test(value);
+
 export async function createPlatform(label: string, actorId: string) {
 	const token = `xitter_${randomBytes(32).toString("hex")}`;
 	const id = newId();
 	await sql`insert into client_platforms (id, label, token_hash, creator_id) values (${id}::bigint, ${label}, ${hash(token)}, ${actorId}::bigint)`;
 	return { id, label, token };
+}
+
+export async function renamePlatform(id: string, label: string): Promise<{ ok: true; previous: string } | { ok: false; reason: "missing" | "revoked" }> {
+	return sql.begin(async (tx) => {
+		const [row] = await tx`select label, revoked from client_platforms where id = ${id}::bigint for update`;
+		if (!row) return { ok: false, reason: "missing" };
+		if (row.revoked) return { ok: false, reason: "revoked" };
+		if (row.label !== label) await tx`update client_platforms set label = ${label} where id = ${id}::bigint`;
+		return { ok: true, previous: row.label as string };
+	});
 }
 
 export async function platformSource(req: Request): Promise<string | null> {

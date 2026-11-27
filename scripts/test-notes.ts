@@ -16,7 +16,7 @@ async function session(username: string, password = "testpass123") {
 }
 const ids: string[] = [];
 const a = await session("pozo"), b = await session("goldcorp");
-let platform: any, postId: string | undefined;
+let platform: any, postId: string | undefined, renamedPostId: string | undefined;
 const [author] = await sql`select id::text, notes_writer from users where screen_name = 'pozo'`;
 try {
 	platform = (await a.admin("createPlatform", { label: "Xitter for UFO" })).body;
@@ -88,7 +88,20 @@ try {
 	} finally { await sql`delete from blocks where blocker_id = ${authorId}::bigint and blocked_id = ${ids[0]}::bigint`; }
 	const get = await fetch(origin + "/i/api/graphql/q/BirdwatchCreateBatSignal?variables=" + encodeURIComponent(JSON.stringify({ tweet_id: postId })), { headers: b.headers });
 	check(get.status === 405, "GET cannot mutate notes");
+	check((await b.admin("renamePlatform", { id: platform.id, label: "Xitter for Evil" })).status === 403, "rename platform admin only");
+	check((await a.admin("renamePlatform", { id: platform.id, label: "   " })).status === 400, "blank platform label rejected");
+	check((await a.admin("renamePlatform", { id: platform.id, label: "a".repeat(81) })).status === 400, "overlong platform label rejected");
+	const renamedPlatform = await a.admin("renamePlatform", { id: platform.id, label: "  Xitter for Mars  " });
+	check(renamedPlatform.status === 200 && renamedPlatform.body.label === "Xitter for Mars", "admin renames platform");
+	check((await a.admin("platforms")).body.platforms.find((p: any) => p.id === platform.id)?.label === "Xitter for Mars", "platform list shows renamed label");
+	const renamedCreated = await a.gql("CreateTweet", { tweet_text: "Renamed platform integration check" }, platform.token);
+	renamedPostId = renamedCreated.data.create_tweet.tweet_results.result.rest_id;
+	check(renamedCreated.data.create_tweet.tweet_results.result.legacy.source === "Xitter for Mars", "existing token uses renamed label");
+	check((await context()).data.xitter_post_context[0].source === "Xitter for UFO", "rename preserves historic source");
+	const [renameAudit] = await sql`select detail from audit_log where target = ${platform.id} and action = 'rename_platform' order by id desc limit 1`;
+	check(renameAudit?.detail?.from === "Xitter for UFO" && renameAudit?.detail?.label === "Xitter for Mars", "platform rename audited");
 	await a.admin("revokePlatform", { id: platform.id });
+	check((await a.admin("renamePlatform", { id: platform.id, label: "Xitter for Venus" })).status === 400, "revoked platform cannot be renamed");
 	check(!!(await a.gql("CreateTweet", { tweet_text: "revoked" }, platform.token)).errors, "revoked token rejected");
 	check((await context()).data.xitter_post_context[0].source === "Xitter for UFO", "revocation preserves historic source");
 	await a.gql("BirdwatchDeleteNote", { note_id: noteId });
@@ -101,6 +114,7 @@ try {
 	console.log(`all ${count} notes/platform checks passed`);
 } finally {
 	await sql`update users set notes_writer = ${author.notes_writer} where id = ${author.id}::bigint`;
+	if (renamedPostId) await a.gql("DeleteTweet", { tweet_id: renamedPostId });
 	if (postId) await a.gql("DeleteTweet", { tweet_id: postId });
 	if (platform?.id) await sql`delete from client_platforms where id = ${platform.id}::bigint`;
 	for(const id of ids) await sql`delete from users where id = ${id}::bigint`;
