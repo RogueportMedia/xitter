@@ -67,7 +67,7 @@ try {
 		(${people.b}::bigint, ${postA}::bigint, ${t(20)}),
 		(${people.c}::bigint, ${postA}::bigint, ${t(25)}),
 		(${people.blocked}::bigint, ${postA}::bigint, ${t(26)})`;
-	await sql`insert into reposts(user_id, post_id, created_at) values(${people.b}::bigint, ${postA}::bigint, ${t(30)})`;
+	await sql`insert into reposts(id, user_id, post_id, created_at) values(${newId()}::bigint, ${people.b}::bigint, ${postA}::bigint, ${t(30)})`;
 	await sql`insert into follows(follower_id, followee_id, created_at) values(${people.b}::bigint, ${people.a}::bigint, ${t(40)})`;
 	await sql`insert into posts(id, user_id, text, reply_to_id, reply_to_user_id, conversation_id, created_at, received_at)
 		values(${replyB}::bigint, ${people.b}::bigint, 'reply text', ${postA}::bigint, ${people.a}::bigint, ${postA}::bigint, ${t(50)}, ${t(50)})`;
