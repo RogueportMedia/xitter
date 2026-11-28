@@ -86,6 +86,7 @@ jobs:
           bun scripts/test-ads.ts
           bun scripts/test-ads-promote.ts
           bun scripts/test-api-badges.ts
+          bun scripts/test-notifications-api.ts
           bun scripts/test-scheduled-threads.ts
           bun scripts/test-scheduled-quota.ts
           bun scripts/test-scheduled-mentions.ts

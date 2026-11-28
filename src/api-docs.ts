@@ -17,6 +17,9 @@ const ENDPOINTS: Endpoint[] = [
 	["GET", "/users/{screen_name}/followers", "read", "Who follows it (up to <code>limit</code>, 200 at most)."],
 	["GET", "/users/{screen_name}/following", "read", "Who it follows."],
 	["GET", "/timeline", "read", "Posts and reposts from you and the accounts you follow, newest first."],
+	["GET", "/notifications", "read", "Your <a href=\"#notifications\">notifications</a>, newest first. <code>type=mentions</code> gives replies and mentions only; <code>unread=true</code> gives only unread ones; <code>since</code> (ISO-8601 timestamp) gives notifications newer than that time. Returns <code>last_seen_at</code> and pages with <code>cursor</code>."],
+	["GET", "/notifications/unread", "read", "Your unread notification count (<code>unread_count</code>, capped at 40 like the app's badge) and <code>last_seen_at</code>. <code>type=mentions</code> counts unread replies and mentions only."],
+	["POST", "/notifications/read", "write", "Mark notifications as read. Send an empty body to mark everything up to now, or <code>up_to</code> (an ISO-8601 timestamp, e.g. a notification's <code>created_at</code>) to mark through that time. Answers with <code>unread_count</code> and <code>last_seen_at</code>."],
 	["GET", "/posts/limits", "public", "This instance's <a href=\"#post-limits\">post character limits</a> by badge, preview cutoff (<code>short_post</code>) and character <code>weights</code>. Works without a token; sending one also includes your account's own <code>limit</code>."],
 	["GET", "/posts/{id}", "read", "One post."],
 	["GET", "/posts/{id}/replies", "read", "Its replies."],
@@ -85,6 +88,22 @@ export function apiDocsPage(req: Request): Promise<Response> {
 <h2>Paging</h2>
 <p>Lists take <code>limit</code> (20 by default, 100 at most). Those that page give <code>next_cursor</code>: pass it back as <code>cursor</code> for the next page; it is <code>null</code> at the end.</p>
 
+<h2 id="notifications">Notifications</h2>
+<p><code>GET ${esc(base)}/notifications</code> returns your notifications newest first, along with <code>last_seen_at</code> (your read marker) and <code>next_cursor</code>. Like the app, it excludes blocked, muted and suspended accounts, muted words and hidden instances.</p>
+<ul>
+<li><code>type</code>: <code>all</code> (default) or <code>mentions</code> (replies and mentions only, matching the Mentions tab).</li>
+<li><code>unread=true</code>: only notifications newer than <code>last_seen_at</code>.</li>
+<li><code>since</code>: an ISO-8601 timestamp (for example, the newest notification's <code>created_at</code>); returns only notifications strictly newer than that time. Useful for polling with a read-only token.</li>
+</ul>
+<p>Notification <code>type</code> values: <code>like</code> and <code>repost</code> (grouped per post, with up to 3 recent accounts in <code>actors</code> and the total in <code>actors_count</code>), <code>follow</code> (grouped per day), <code>bell</code> (new posts from accounts you turned post notifications on for), <code>reply</code>, <code>quote</code>, <code>mention</code>, <code>staff</code> (messages, warnings, strikes, appeal decisions and affiliation requests), and <code>money</code> (Equicoins payments, requests and shop gifts when enabled).</p>
+<pre>curl "${esc(base)}/notifications?type=mentions&amp;unread=true" \\
+  -H "Authorization: Bearer $TOKEN"</pre>
+<p>Check your badge count with <code>GET ${esc(base)}/notifications/unread</code> (capped at 40, like the app). To clear unread notifications, call <code>POST ${esc(base)}/notifications/read</code> with an empty body, or pass <code>up_to</code> set to the newest notification's <code>created_at</code> so anything that arrived afterward stays unread. The read marker only moves forward.</p>
+<pre>curl -X POST ${esc(base)}/notifications/read \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"up_to": "2026-11-28T04:55:00.123Z"}'</pre>
+
 <h2 id="post-limits">Post character limits</h2>
 <p>Applications can read this instance's post character limits from <code>GET ${esc(base)}/posts/limits</code> without a token, or send a Bearer token to also receive the signed-in account's own <code>limit</code> (determined by its <code>verified_type</code>). Without an <code>Authorization</code> header, <code>limit</code> is omitted:</p>
 <pre>${esc(JSON.stringify({ data: postLimitsJson(null) }, null, 2))}</pre>
@@ -118,6 +137,7 @@ export function apiDocsPage(req: Request): Promise<Response> {
 <h2>Shapes</h2>
 <p>A post: <code>id</code>, <code>text</code>, <code>source</code> (the app it was posted from, e.g. "${name} for Web", "Xitter API", "App: …", or "&lt;app&gt; - &lt;instance&gt;" for posts from another instance), <code>created_at</code>, <code>edited_at</code>, <code>url</code>, <code>author</code> (an account), <code>reply_to</code>, <code>quote_of</code>, <code>sensitive</code>, <code>counts</code> (likes, reposts, replies, quotes, bookmarks, views), <code>viewer</code> (whether you liked, reposted, bookmarked it), <code>media</code>; in timelines a repost adds <code>reposted_by</code> and <code>reposted_at</code>.</p>
 <p>An account: <code>id</code>, <code>screen_name</code>, <code>name</code>, <code>bio</code>, <code>pronouns</code> (or null), <code>location</code>, <code>website</code>, <code>avatar_url</code>, <code>banner_url</code>, <code>verified_type</code> (<code>blue</code>, <code>business</code>, <code>government</code>, <code>government_individual</code> or null), <code>verified</code> (whether the app shows a checkmark: also true for an organisation's affiliates, unless the instance turned affiliate checkmarks off), <code>verified_since</code>, <code>parody_label</code> (<code>Parody</code>, <code>Commentary</code>, <code>Fan</code> or null), <code>label</code> (a label staff gave it: <code>text</code>, <code>url</code>, <code>badge_url</code>; or null), <code>automated_by</code> (a bot's owner, or null), <code>organization</code> (a business account: a business or government, or any account with affiliates) with <code>affiliates_count</code>, <code>affiliations</code> (organisations it's an affiliate of: <code>screen_name</code>, <code>name</code>, <code>badge_url</code>), <code>badges</code> (custom badges, pride flags and, for an account from another instance, a globe: <code>name</code>, <code>url</code>), <code>protected</code>, <code>created_at</code>, <code>url</code>, <code>counts</code> (posts, followers, following, likes) and <code>viewer</code> (following, followed_by).</p>
+<p>A notification: <code>id</code>, <code>type</code> (<code>like</code>, <code>repost</code>, <code>follow</code>, <code>bell</code>, <code>reply</code>, <code>quote</code>, <code>mention</code>, <code>staff</code> or <code>money</code>), <code>created_at</code>, <code>unread</code>, <code>text</code>, <code>url</code>, <code>actors</code> (up to 3 accounts, newest first; empty for <code>staff</code>), <code>actors_count</code> and <code>post</code> (a post, or null).</p>
 
 <p class="dim">Posts made with a personal token have "Xitter API" as their <code>source</code>; posts made through a connected app show "App: &lt;name&gt;". What a token sees is what its account sees: blocks, protected accounts and suspensions apply.</p>
 `;

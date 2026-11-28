@@ -148,6 +148,20 @@ async function items(viewerId: string, opts: { before?: number; after?: number; 
 
 const ICON = { like: "heart_icon", repost: "retweet_icon", follow: "person_icon", bell: "bell_icon" } as const;
 const VERB = { like: "liked your post", repost: "reposted your post", follow: "followed you", bell: "" } as const;
+const POST_VERB = { reply: "replied to your post", quote: "quoted your post", mention: "mentioned you" } as const;
+
+const displayName = (u: User) => u.name || u.screen_name;
+
+// plain-text version of message() for the public API
+function groupText(users: User[], total: number, verb: string) {
+	const names = users.map(displayName);
+	let who: string;
+	if (total === 1) who = names[0];
+	else if (total === 2 && names.length >= 2) who = `${names[0]} and ${names[1]}`;
+	else if (total === 3 && names.length >= 3) who = `${names[0]}, ${names[1]} and ${names[2]}`;
+	else who = `${names[0]} and ${total - 1} other${total - 1 === 1 ? "" : "s"}`;
+	return `${who} ${verb}`;
+}
 
 // "A", "A and B", "A, B and C", "A and 5 others" with each name linked to its account
 function message(users: User[], total: number, verb: string, prefix = "") {
@@ -338,12 +352,123 @@ export async function unreadCount(viewerId: string, sinceMs?: number): Promise<n
 	return (await items(viewerId, { after: Math.max(ms(seen), sinceMs ?? 0) - 1, limit: 40, mentionsOnly: false })).length;
 }
 
-// the client reports the newest entry it has shown; cursors and sort indexes are both accepted
-export async function markSeen(viewerId: string, cursorOrIndex: string | null) {
-	const m = /(\d{10,16})/.exec(cursorOrIndex ?? "");
-	// everything up to the end of that millisecond is read
-	const at = m ? new Date(Math.min(Number(m[1]) + 1, Date.now())) : new Date();
+export async function unreadSummary(viewerId: string, opts: { mentionsOnly?: boolean } = {}): Promise<{ unreadCount: number; lastSeenAt: Date }> {
+	const [{ seen }] = await sql`select notifications_seen_at as seen from users where id = ${viewerId}::bigint`;
+	const list = await items(viewerId, { after: ms(seen) - 1, limit: 40, mentionsOnly: !!opts.mentionsOnly });
+	return { unreadCount: list.length, lastSeenAt: new Date(seen) };
+}
+
+// the client reports the newest entry it has shown; cursors, sort indexes and ms timestamps are accepted
+export async function markSeen(viewerId: string, cursorOrIndex: string | number | null) {
+	const cap = Date.now() + 1;
+	let at: Date;
+	if (typeof cursorOrIndex === "number" && Number.isFinite(cursorOrIndex)) {
+		at = new Date(Math.min(Math.max(Math.trunc(cursorOrIndex) + 1, 0), cap));
+	} else {
+		const m = /(\d{10,16})/.exec(typeof cursorOrIndex === "string" ? cursorOrIndex : "");
+		// everything up to the end of that millisecond is read
+		at = m ? new Date(Math.min(Number(m[1]) + 1, cap)) : new Date(cap);
+	}
 	await sql`update users set notifications_seen_at = greatest(notifications_seen_at, ${at}) where id = ${viewerId}::bigint`;
+}
+
+export type NotificationKind = "like" | "repost" | "follow" | "bell" | "reply" | "quote" | "mention" | "staff" | "money";
+
+export type ApiNotification = {
+	id: string;
+	type: NotificationKind;
+	at: number;
+	unread: boolean;
+	text: string;
+	url: string;
+	actors: User[];
+	actorsCount: number;
+	post: PostRow | null;
+};
+
+function apiNotification(i: Item, users: Map<string, User>, posts: Map<string, PostRow>, seenMs: number): ApiNotification | undefined {
+	if (i.kind === "staff") {
+		return {
+			id: i.key,
+			type: "staff",
+			at: i.at,
+			unread: i.at >= seenMs,
+			text: i.text,
+			url: `${PUBLIC_ORIGIN}${i.url ?? "/account/notices"}`,
+			actors: [],
+			actorsCount: 0,
+			post: null,
+		};
+	}
+	if (i.kind === "money") {
+		const from = users.get(i.users[0]);
+		if (!from) return undefined;
+		return {
+			id: i.key,
+			type: "money",
+			at: i.at,
+			unread: i.at >= seenMs,
+			text: `${displayName(from)} ${i.text}`,
+			url: `${PUBLIC_ORIGIN}${i.path}`,
+			actors: [from],
+			actorsCount: 1,
+			post: null,
+		};
+	}
+	if (i.kind === "post") {
+		const post = posts.get(i.postId);
+		if (!post) return undefined;
+		return {
+			id: `${i.reason}-${post.id}`,
+			type: i.reason,
+			at: i.at,
+			unread: i.at >= seenMs,
+			text: `${displayName(post.author)} ${POST_VERB[i.reason]}`,
+			url: `${PUBLIC_ORIGIN}/${post.author.screen_name}/status/${post.id}`,
+			actors: [post.author],
+			actorsCount: 1,
+			post,
+		};
+	}
+	const from = i.users.map((id) => users.get(id)).filter((u): u is User => !!u);
+	const post = i.postId ? posts.get(i.postId) : undefined;
+	if (!from.length || (i.postId && !post)) return undefined;
+	return {
+		id: i.key,
+		type: i.kind,
+		at: i.at,
+		unread: i.at >= seenMs,
+		text: i.kind === "bell" ? `New post from ${displayName(from[0])}` : groupText(from, i.total, VERB[i.kind]),
+		url: post ? `${PUBLIC_ORIGIN}/${post.author.screen_name}/status/${post.id}` : `${PUBLIC_ORIGIN}/${from[0].screen_name}`,
+		actors: from,
+		actorsCount: i.total,
+		post: post ?? null,
+	};
+}
+
+export async function notificationsList(
+	viewerId: string,
+	opts: { limit: number; mentionsOnly?: boolean; before?: number; after?: number; unreadOnly?: boolean },
+): Promise<{ items: ApiNotification[]; lastSeenAt: Date; nextCursor: string | null }> {
+	const [{ seen }] = await sql`select notifications_seen_at as seen from users where id = ${viewerId}::bigint`;
+	const seenMs = ms(seen);
+	const after = opts.unreadOnly
+		? opts.after !== undefined
+			? Math.max(opts.after, seenMs - 1)
+			: seenMs - 1
+		: opts.after;
+	const list = await items(viewerId, {
+		limit: opts.limit,
+		mentionsOnly: !!opts.mentionsOnly,
+		...(opts.before !== undefined ? { before: opts.before } : {}),
+		...(after !== undefined ? { after } : {}),
+	});
+	const userIds = [...new Set(list.flatMap((i) => (i.kind === "post" || i.kind === "staff" ? [] : i.users)))];
+	const postIds = [...new Set(list.map((i) => (i.kind === "staff" ? undefined : i.postId)).filter((id): id is string => !!id))];
+	const [users, posts] = await Promise.all([usersByIds(viewerId, userIds), postsByIds(viewerId, postIds)]);
+	const resolved = list.map((i) => apiNotification(i, users, posts, seenMs)).filter((n): n is ApiNotification => !!n);
+	const nextCursor = list.length >= opts.limit ? String(list[list.length - 1].at) : null;
+	return { items: resolved, lastSeenAt: new Date(seen), nextCursor };
 }
 
 // For push: what arrived after `sinceMs`, as text and an in-app path

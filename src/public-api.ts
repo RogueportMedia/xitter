@@ -16,6 +16,7 @@ import { isId, newId } from "./ids";
 import { requestIp } from "./login-history";
 import { absolute, mediaUpload, mediaUrl, posterUrl } from "./media";
 import { type PostRow, badgeList, isOrganization, isVerified, shownVerifiedType, verifiedSince } from "./model";
+import { type ApiNotification, markSeen, notificationsList, unreadSummary } from "./notifications";
 import { shownSource } from "./platforms";
 import { PostError, feed, getPost, likerIds, postsByIds, replies, type FeedItem } from "./posts";
 import { setProfileImage, updatePronouns, updateProfileText } from "./rest";
@@ -179,6 +180,49 @@ export function postLimitsJson(verifiedType?: string | null) {
 		},
 		weights: { default: 1, wide: 2, link: LINK_WEIGHT },
 	};
+}
+
+export function notificationJson(n: ApiNotification) {
+	return {
+		id: n.id,
+		type: n.type,
+		created_at: new Date(n.at).toISOString(),
+		unread: n.unread,
+		text: n.text,
+		url: n.url,
+		actors: n.actors.map(userJson),
+		actors_count: n.actorsCount,
+		post: n.post ? postJson(n.post) : null,
+	};
+}
+
+const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/i;
+
+export function parseIsoMs(value: unknown, field: string): number {
+	if (typeof value !== "string") throw new ApiError(400, `${field} must be an ISO-8601 timestamp.`);
+	const trimmed = value.trim();
+	const m = ISO_TIMESTAMP.exec(trimmed);
+	const ms = m ? Date.parse(trimmed) : NaN;
+	if (!m || !Number.isFinite(ms) || ms < 0 || ms > 8.64e15) throw new ApiError(400, `${field} must be an ISO-8601 timestamp.`);
+	const [year, month, day] = m.slice(1).map(Number);
+	if (new Date(Date.UTC(year, month - 1, day)).toISOString().slice(0, 10) !== trimmed.slice(0, 10))
+		throw new ApiError(400, `${field} must be an ISO-8601 timestamp.`);
+	return ms;
+}
+
+function notificationTypeOf(url: URL): boolean {
+	const raw = (url.searchParams.get("type") ?? "").trim().toLowerCase();
+	if (!raw || raw === "all") return false;
+	if (raw === "mentions") return true;
+	throw new ApiError(400, 'type must be "all" or "mentions".');
+}
+
+function notificationCursorOf(url: URL): number | undefined {
+	const raw = url.searchParams.get("cursor");
+	if (raw === null || raw === "") return undefined;
+	const n = /^[1-9]\d{0,15}$/.test(raw) ? Number(raw) : NaN;
+	if (!Number.isSafeInteger(n) || n > 8.64e15) throw new ApiError(400, "cursor must be a value returned in next_cursor.");
+	return n;
 }
 
 const itemJson = (i: FeedItem) => postJson(i.post, i.repost);
@@ -525,6 +569,41 @@ const ROUTES: Route[] = [
 		run: async (v, _m, _r, url) => {
 			const limit = limitOf(url);
 			return page(await feed({ viewerId: v.id, authors: { following: true }, replies: false, kinds: "both", limit, before: cursorOf(url) }), limit);
+		},
+	},
+	{
+		method: "GET", pattern: /^\/notifications$/, scope: "read",
+		run: async (v, _m, _r, url) => {
+			const mentionsOnly = notificationTypeOf(url);
+			const unreadParam = (url.searchParams.get("unread") ?? "").trim().toLowerCase();
+			if (unreadParam && unreadParam !== "true" && unreadParam !== "false") throw new ApiError(400, 'unread must be "true" or "false".');
+			const sinceParam = url.searchParams.get("since");
+			const after = sinceParam !== null && sinceParam !== "" ? parseIsoMs(sinceParam, "since") : undefined;
+			const out = await notificationsList(v.id, {
+				limit: limitOf(url),
+				mentionsOnly,
+				before: notificationCursorOf(url),
+				after,
+				unreadOnly: unreadParam === "true",
+			});
+			return { data: out.items.map(notificationJson), last_seen_at: iso(out.lastSeenAt), next_cursor: out.nextCursor };
+		},
+	},
+	{
+		method: "GET", pattern: /^\/notifications\/unread$/, scope: "read",
+		run: async (v, _m, _r, url) => {
+			const out = await unreadSummary(v.id, { mentionsOnly: notificationTypeOf(url) });
+			return { data: { unread_count: out.unreadCount, last_seen_at: iso(out.lastSeenAt) } };
+		},
+	},
+	{
+		method: "POST", pattern: /^\/notifications\/read$/, scope: "write", bucket: "write",
+		run: async (v, _m, req) => {
+			const b = await body(req);
+			const upTo = b.up_to === undefined || b.up_to === null || b.up_to === "" ? null : parseIsoMs(b.up_to, "up_to");
+			await markSeen(v.id, upTo);
+			const out = await unreadSummary(v.id);
+			return { data: { unread_count: out.unreadCount, last_seen_at: iso(out.lastSeenAt) } };
 		},
 	},
 	{ method: "GET", pattern: /^\/posts\/limits$/, scope: "public", run: async (v) => ({ data: postLimitsJson(v ? v.verified_type ?? null : undefined) }) },

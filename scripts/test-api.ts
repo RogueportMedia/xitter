@@ -105,6 +105,29 @@ const postsBefore = (await b("GET", `/users/${nameB}`)).json.data?.counts?.posts
 check((await b("POST", `/posts/${pid}/repost`)).json.data?.viewer?.reposted === true, "repost");
 check((await b("GET", `/users/${nameB}`)).json.data?.counts?.posts === postsBefore + 1, "repost counts toward total posts");
 check((await b("POST", `/posts/${pid}/bookmark`)).json.data?.viewer?.bookmarked === true, "bookmark");
+
+// notifications
+const unread = await ar("GET", "/notifications/unread");
+check(unread.status === 200 && unread.json.data?.unread_count >= 4, "GET /notifications/unread counts new activity", unread.json);
+const notifs = await ar("GET", "/notifications?limit=20");
+const notifTypes = (notifs.json.data ?? []).map((n: any) => n.type);
+check(
+	notifs.status === 200 && ["like", "repost", "reply", "quote"].every((t) => notifTypes.includes(t)),
+	"GET /notifications lists like, repost, reply and quote",
+	notifTypes,
+);
+const mentionNotifs = await ar("GET", "/notifications?type=mentions&limit=20");
+check(
+	mentionNotifs.status === 200 &&
+		mentionNotifs.json.data?.some((n: any) => n.type === "reply" && n.post?.id === reply.json.data?.id) &&
+		!mentionNotifs.json.data?.some((n: any) => n.type === "quote" && n.post?.id === quote.json.data?.id),
+	"GET /notifications?type=mentions includes reply, not quote",
+);
+check((await ar("POST", "/notifications/read")).status === 403, "a read token can't mark notifications read");
+const markedRead = await a("POST", "/notifications/read");
+check(markedRead.status === 200 && markedRead.json.data?.unread_count === 0, "POST /notifications/read clears unread count", markedRead.json);
+check((await ar("GET", "/notifications/unread")).json.data?.unread_count === 0, "GET /notifications/unread is 0 after marking read");
+
 check((await b("DELETE", `/posts/${pid}/like`)).json.data?.viewer?.liked === false, "unlike");
 check((await b("DELETE", `/posts/${pid}/repost`)).json.data?.viewer?.reposted === false, "undo repost");
 check((await b("GET", `/users/${nameB}`)).json.data?.counts?.posts === postsBefore, "undo repost lowers total posts");
