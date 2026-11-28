@@ -89,9 +89,9 @@ function verificationInfo(u: User) {
 		: type === "business"
 			? [`This account is verified because it’s an organization on ${instance} and met our verification requirements. `]
 			: type === "government"
-				? [`This account is verified because it is an administrator or moderation-related account on ${instance} and met our verification requirements. `]
+				? [`This account is verified because it’s an administrator or moderation-related account on ${instance} and met our verification requirements. `]
 				: type === "government_individual"
-					? [`This account is verified because it belongs to an administrator or moderation-related official on ${instance} and met our verification requirements. `]
+					? [`This account is verified because it’s an administrator or moderation-related official on ${instance} and met our verification requirements. `]
 					: [`This account is verified because it met ${instance}’s verification requirements. `];
 	parts.push({ text: "Learn more", url: `${PUBLIC_ORIGIN}/rules` });
 	let text = "";
