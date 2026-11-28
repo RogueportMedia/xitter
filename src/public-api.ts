@@ -13,6 +13,7 @@ import { pronounsValue } from "./pronouns";
 import { sql } from "./db";
 import { callOperation } from "./graphql";
 import { isId, newId } from "./ids";
+import { requestIp } from "./login-history";
 import { absolute, mediaUpload, mediaUrl, posterUrl } from "./media";
 import { type PostRow, badgeList, isOrganization, isVerified, shownVerifiedType, verifiedSince } from "./model";
 import { shownSource } from "./platforms";
@@ -22,6 +23,7 @@ import { ReplyControlError } from "./reply-controls";
 import { type Bucket, limitHeaders, limitedResponse, noteRefusal, take } from "./ratelimit";
 import { searchPosts, searchUsers } from "./search";
 import { feature, settings } from "./settings";
+import { LINK_WEIGHT, SHORT_POST, postLimitFor } from "./textlen";
 import {
 	MoneyError,
 	NOTE_MAX,
@@ -160,6 +162,22 @@ export function postJson(p: PostRow, repostBy?: { by: User; created_at: Date }) 
 			alt_text: m.alt_text ?? null,
 		})),
 		...(repostBy ? { reposted_by: userJson(repostBy.by), reposted_at: iso(repostBy.created_at) } : {}),
+	};
+}
+
+export function postLimitsJson(verifiedType?: string | null) {
+	const l = settings().post_limits;
+	return {
+		...(verifiedType !== undefined ? { limit: postLimitFor(verifiedType) } : {}),
+		short_post: SHORT_POST,
+		limits: {
+			none: l.none,
+			blue: l.blue,
+			business: l.business,
+			government: l.government,
+			government_individual: l.government,
+		},
+		weights: { default: 1, wide: 2, link: LINK_WEIGHT },
 	};
 }
 
@@ -444,7 +462,9 @@ const MONEY_ROUTES: Route[] = [
 	{ method: "GET", pattern: /^\/money\/requests\/(\d{1,19})$/, scope: "read", run: async (v, m) => (await moneyOn(v, { accepted: false }), { data: await oneRequest(v, m[1]) }) },
 ];
 
-type Route = { method: string; pattern: RegExp; scope: "read" | "write"; bucket?: Bucket; run: (v: Viewer, m: RegExpExecArray, req: Request, url: URL) => Promise<unknown> };
+type Route =
+	| { method: string; pattern: RegExp; scope: "public"; bucket?: Bucket; run: (v: Viewer | undefined, m: RegExpExecArray, req: Request, url: URL) => Promise<unknown> }
+	| { method: string; pattern: RegExp; scope: "read" | "write"; bucket?: Bucket; run: (v: Viewer, m: RegExpExecArray, req: Request, url: URL) => Promise<unknown> };
 
 const op = async (name: string, v: Viewer, vars: Record<string, unknown>) => {
 	try {
@@ -507,6 +527,7 @@ const ROUTES: Route[] = [
 			return page(await feed({ viewerId: v.id, authors: { following: true }, replies: false, kinds: "both", limit, before: cursorOf(url) }), limit);
 		},
 	},
+	{ method: "GET", pattern: /^\/posts\/limits$/, scope: "public", run: async (v) => ({ data: postLimitsJson(v ? v.verified_type ?? null : undefined) }) },
 	{ method: "GET", pattern: /^\/posts\/(\d{1,19})$/, scope: "read", run: async (v, m) => ({ data: postJson(await postOr404(v, m[1])) }) },
 	{
 		method: "GET", pattern: /^\/posts\/(\d{1,19})\/replies$/, scope: "read",
@@ -618,9 +639,6 @@ const ROUTES: Route[] = [
 export async function publicApi(req: Request, url: URL): Promise<Response> {
 	const path = url.pathname.slice("/api/v1".length) || "/";
 	if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
-	const auth = await tokenViewer(req);
-	if (!auth) return withCors(fail(401, "Send a personal or connected-app token as Authorization: Bearer xit_..."));
-	const { viewer, scope } = auth;
 	let route: Route | undefined;
 	let match: RegExpExecArray | null = null;
 	for (const r of ROUTES) {
@@ -632,19 +650,23 @@ export async function publicApi(req: Request, url: URL): Promise<Response> {
 			break;
 		}
 	}
+	const hasAuth = !!(req.headers.get("authorization") ?? "").trim();
+	const auth = hasAuth || route?.scope !== "public" ? await tokenViewer(req) : undefined;
+	if ((route?.scope !== "public" || hasAuth) && !auth) return withCors(fail(401, "Send a personal or connected-app token as Authorization: Bearer xit_..."));
 	if (!route || !match) return withCors(fail(404, "No such endpoint. See /api for the list."));
-	if (route.scope === "write" && scope !== "write") return withCors(fail(403, "This token can only read."));
+	if (route.scope === "write" && auth?.scope !== "write") return withCors(fail(403, "This token can only read."));
 	// the same standing as in the app (restricted-page.ts): reading goes on, nothing else
-	if (route.scope === "write" && viewer.status === "restricted") return withCors(fail(403, "Your account can't interact right now."));
+	if (route.scope === "write" && auth?.viewer.status === "restricted") return withCors(fail(403, "Your account can't interact right now."));
 	if (settings().operations.maintenance) return withCors(fail(503, settings().operations.message || "The instance is under maintenance."));
 
+	const who = auth ? auth.viewer.id : `ip:${requestIp(req) ?? "unknown"}`;
 	const where = `api ${route.method} ${route.pattern.source}`;
-	const last = take(route.bucket ? [["read", viewer.id], [route.bucket, viewer.id]] : [["read", viewer.id]], (bucket, first) => {
-		if (first) noteRefusal(bucket, where, viewer.id);
+	const last = take(route.bucket ? [["read", who], [route.bucket, who]] : [["read", who]], (bucket, first) => {
+		if (first && auth) noteRefusal(bucket, where, auth.viewer.id);
 	});
 	if (!last.ok) return withCors(limitedResponse(last));
 	try {
-		const out: any = await route.run(viewer, match, req, url);
+		const out: any = route.scope === "public" ? await route.run(auth?.viewer, match, req, url) : await route.run(auth!.viewer, match, req, url);
 		const { status, ...rest } = out ?? {};
 		return withCors(json(rest, status ?? 200, limitHeaders(last)));
 	} catch (e) {

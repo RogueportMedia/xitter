@@ -48,6 +48,16 @@ try {
 	const viewer = newId();
 	await sql`insert into users(id, screen_name, name, password_hash) values(${viewer}::bigint, ${`viewer_${tag}`}, 'Viewer', 'unused')`;
 	const token = await createToken(viewer, "badges test", "read");
+	const orgToken = await createToken(ids.org, "org limits test", "read");
+	const affiliateToken = await createToken(ids.person, "affiliate limits test", "read");
+
+	// post character limits follow the account's own verified_type, not affiliate checkmarks
+	const viewerLimits = await get(token, "/posts/limits");
+	const orgLimits = await get(orgToken, "/posts/limits");
+	const affiliateLimits = await get(affiliateToken, "/posts/limits");
+	assert.equal(viewerLimits.limit, viewerLimits.limits.none, "unverified viewer gets none post limit");
+	assert.equal(orgLimits.limit, orgLimits.limits.business, "business org gets business post limit");
+	assert.equal(affiliateLimits.limit, affiliateLimits.limits.none, "affiliate without own badge gets none post limit");
 
 	// an organisation: verified since its badge, with its affiliate count
 	const o = await get(token, `/users/${name("org")}`);

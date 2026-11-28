@@ -47,6 +47,19 @@ const a = api(writeA), ar = api(readA), b = api(writeB), anon = api(undefined);
 
 check((await anon("GET", "/me")).status === 401, "no token: 401");
 check((await api("xit_" + "0".repeat(48))("GET", "/me")).status === 401, "a made-up token: 401");
+const anonLimits = await anon("GET", "/posts/limits");
+check(
+	anonLimits.status === 200 &&
+		anonLimits.json.data?.short_post === 280 &&
+		!("limit" in (anonLimits.json.data ?? {})) &&
+		typeof anonLimits.json.data?.limits?.none === "number" &&
+		anonLimits.json.data?.limits?.government_individual === anonLimits.json.data?.limits?.government,
+	"GET /posts/limits without a token",
+	anonLimits.json,
+);
+check((await api("xit_" + "0".repeat(48))("GET", "/posts/limits")).status === 401, "GET /posts/limits with a bad token: 401");
+const authedLimits = await ar("GET", "/posts/limits");
+check(authedLimits.status === 200 && authedLimits.json.data?.limit === authedLimits.json.data?.limits?.none, "GET /posts/limits with a read token includes account limit", authedLimits.json);
 const me = await a("GET", "/me");
 check(me.status === 200 && me.json.data?.screen_name?.toLowerCase() === nameA.toLowerCase(), "GET /me", me.json.data?.screen_name);
 check(me.headers.get("x-rate-limit-remaining") !== null, "answers carry the rate limit headers");

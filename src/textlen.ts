@@ -6,11 +6,12 @@
 import { settings } from "./settings";
 
 const LINK = /https?:\/\/\S+/g;
+export const LINK_WEIGHT = 23;
 
 export function weightedLength(text: string): number {
 	let n = 0;
 	const rest = text.normalize("NFC").replace(LINK, () => {
-		n += 23;
+		n += LINK_WEIGHT;
 		return "";
 	});
 	for (const c of rest) {

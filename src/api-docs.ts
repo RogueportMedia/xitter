@@ -2,10 +2,12 @@
 
 import { accountPage, esc } from "./account-page";
 import { PUBLIC_ORIGIN } from "./config";
+import { postLimitsJson } from "./public-api";
 import { RULES } from "./ratelimit";
 import { settings } from "./settings";
+import { SHORT_POST } from "./textlen";
 
-type Endpoint = [method: string, path: string, scope: "read" | "write", what: string];
+type Endpoint = [method: string, path: string, scope: "public" | "read" | "write", what: string];
 
 const ENDPOINTS: Endpoint[] = [
 	["GET", "/me", "read", "Your account."],
@@ -15,6 +17,7 @@ const ENDPOINTS: Endpoint[] = [
 	["GET", "/users/{screen_name}/followers", "read", "Who follows it (up to <code>limit</code>, 200 at most)."],
 	["GET", "/users/{screen_name}/following", "read", "Who it follows."],
 	["GET", "/timeline", "read", "Posts and reposts from you and the accounts you follow, newest first."],
+	["GET", "/posts/limits", "public", "This instance's <a href=\"#post-limits\">post character limits</a> by badge, preview cutoff (<code>short_post</code>) and character <code>weights</code>. Works without a token; sending one also includes your account's own <code>limit</code>."],
 	["GET", "/posts/{id}", "read", "One post."],
 	["GET", "/posts/{id}/replies", "read", "Its replies."],
 	["GET", "/posts/{id}/likes", "read", "Who liked it, newest first (up to <code>limit</code>, 200 at most)."],
@@ -47,18 +50,21 @@ const DOCS_CSS = `table{width:100%;border-collapse:collapse}
 td{padding:10px 8px;border-top:1px solid var(--border);vertical-align:top}
 td:first-child,td:nth-child(2){font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;white-space:nowrap}
 td:first-child{font-weight:700}
-.w{color:#f91880}.r{color:var(--success)}
+.w{color:#f91880}.r{color:var(--success)}.p{color:var(--accent)}
 @media (max-width:560px){tr{display:grid;grid-template-columns:auto 1fr;border-top:1px solid var(--border);padding:8px 0}td{border:0;padding:2px 8px 2px 0}td:nth-child(2){white-space:normal;word-break:break-all}td:nth-child(3){grid-column:1/-1}}`;
 
 export function apiDocsPage(req: Request): Promise<Response> {
 	const name = esc(settings().instance_name);
 	const base = `${PUBLIC_ORIGIN}/api/v1`;
 	const window = (b: keyof typeof RULES) => `${RULES[b].limit} per ${RULES[b].window / 60_000} minutes`;
+	const fmt = (n: number) => n.toLocaleString("en-US");
+	const postLimits = settings().post_limits;
+	const scopeClass = (s: Endpoint[2]) => (s === "write" ? "w" : s === "public" ? "p" : "r");
 	const body = `<h1>${name} API</h1>
 <p class="dim">Read and post on ${name} from scripts and bots, as your own account.</p>
 
 <h2>Signing in</h2>
-<p>Make a token at <a href="/account/api">/account/api</a>. A <span class="r">read</span> token can only look; a <span class="w">write</span> token can also post, like and follow. Send it with every request:</p>
+<p>Make a token at <a href="/account/api">/account/api</a>. A <span class="p">public</span> endpoint works without a token; a <span class="r">read</span> token can only look; a <span class="w">write</span> token can also post, like and follow. Send it with your requests:</p>
 <pre>Authorization: Bearer xit_...</pre>
 <p>Changing or resetting your password revokes all API tokens. Make new tokens for your scripts and bots afterward.</p>
 <p>For an app used by other people, register a public client at <a href="/account/apps/developer">Developer apps</a>. Users review and revoke grants at <a href="/account/apps">Connected apps</a>.</p>
@@ -74,10 +80,16 @@ export function apiDocsPage(req: Request): Promise<Response> {
 <p>Requests go to <code>${esc(base)}</code>. Bodies are JSON (or a form); answers are JSON with the result in <code>data</code>, or <code>{"error": "..."}</code> with a 4xx or 5xx status.</p>
 
 <h2>Endpoints</h2>
-<table>${ENDPOINTS.map(([m, p, s, w]) => `<tr><td>${m}</td><td>${esc(p)}</td><td><span class="${s === "write" ? "w" : "r"}">${s}</span> · ${w}</td></tr>`).join("")}</table>
+<table>${ENDPOINTS.map(([m, p, s, w]) => `<tr><td>${m}</td><td>${esc(p)}</td><td><span class="${scopeClass(s)}">${s}</span> · ${w}</td></tr>`).join("")}</table>
 
 <h2>Paging</h2>
 <p>Lists take <code>limit</code> (20 by default, 100 at most). Those that page give <code>next_cursor</code>: pass it back as <code>cursor</code> for the next page; it is <code>null</code> at the end.</p>
+
+<h2 id="post-limits">Post character limits</h2>
+<p>Applications can read this instance's post character limits from <code>GET ${esc(base)}/posts/limits</code> without a token, or send a Bearer token to also receive the signed-in account's own <code>limit</code> (determined by its <code>verified_type</code>). Without an <code>Authorization</code> header, <code>limit</code> is omitted:</p>
+<pre>${esc(JSON.stringify({ data: postLimitsJson(null) }, null, 2))}</pre>
+<p>Post length is counted in X's weighted characters (NFC-normalized): most characters count as <code>1</code>, wide characters such as CJK and emoji count as <code>2</code>, and each <code>http://</code> or <code>https://</code> link counts as <code>23</code> regardless of its length. Posts longer than <code>${SHORT_POST}</code> (<code>short_post</code>) weighted characters show a preview with "Show more" in timelines.</p>
+<p>Current limits on ${name}: ${fmt(postLimits.none)} with no badge (<code>none</code>), ${fmt(postLimits.blue)} with a blue check (<code>blue</code>), ${fmt(postLimits.business)} with a gold check (<code>business</code>), and ${fmt(postLimits.government)} with a grey check (<code>government</code> and <code>government_individual</code>).</p>
 
 <h2 id="chunked-uploads">Chunked uploads</h2>
 <p>Use chunks for files larger than the server's 16 MiB request limit, or to retry an interrupted upload. Each segment can be up to 5 MiB; the instance's image and video file limits still apply.</p>
