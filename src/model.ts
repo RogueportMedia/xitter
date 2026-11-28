@@ -85,13 +85,13 @@ function verificationInfo(u: User) {
 	const instance = settings().instance_name;
 	const type = shownVerifiedType(u);
 	const parts: (string | { text: string; url: string })[] = u.org && affiliateChecked(u)
-		? ["This account is verified because it’s an affiliate of ", { text: `@${u.org.screen_name}`, url: `https://x.com/${u.org.screen_name}` }, ` on ${instance}. `]
+		? ["This account is verified because it’s an affiliate of ", { text: `@${u.org.screen_name}`, url: `https://x.com/${u.org.screen_name}` }, ` on ${instance}. It may or may not meet our verification requirements. `]
 		: type === "business"
-			? [`This account is verified because it’s an organization on ${instance}. `]
+			? [`This account is verified because it’s an organization on ${instance} and met our verification requirements. `]
 			: type === "government"
-				? [`This account is verified because it is a government or multilateral organization account on ${instance}. `]
+				? [`This account is verified because it is an administrator or moderation-related account on ${instance} and met our verification requirements. `]
 				: type === "government_individual"
-					? [`This account is verified because it belongs to a government or multilateral organization official on ${instance}. `]
+					? [`This account is verified because it belongs to an administrator or moderation-related official on ${instance} and met our verification requirements. `]
 					: [`This account is verified because it met ${instance}’s verification requirements. `];
 	parts.push({ text: "Learn more", url: `${PUBLIC_ORIGIN}/rules` });
 	let text = "";
