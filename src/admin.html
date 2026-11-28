@@ -2401,6 +2401,7 @@ async function renderUser(main, id) {
 	revealIps = null;
 	const self = me && me.id === u.id;
 	const canHere = (what) => !u.instance && can(what);
+	const isGov = u.verified_type === "government" || u.verified_type === "government_individual";
 	main.innerHTML =
 		'<header class="user-admin-header"><a class="user-admin-back" href="#users">← Back to users</a><div class="user-admin-identity"><img class="user-admin-avatar" src="' + esc(avatar(u)) + '" alt=""><div class="user-admin-title"><h1>' + esc(u.name) + '</h1><div class="user-admin-subtitle">@' + esc(u.screen_name) + standing(u) + '</div></div><a class="btn user-admin-open" href="/' + esc(u.screen_name) + '" target="_blank" rel="noopener">Open profile</a></div>' +
 		'<div class="user-admin-facts"><span>Joined <b>' + esc(when(u.created_at)) + '</b></span><span>Last sign-in <b>' + esc(when(u.last_seen_at)) + '</b></span><span><b>' + u.posts + '</b> posts</span><span><b>' + u.followers + '</b> followers</span><span><b>' + u.sessions + '</b> active ' + (u.sessions === 1 ? 'session' : 'sessions') + '</span>' +
@@ -2416,6 +2417,8 @@ async function renderUser(main, id) {
 		'<div class="field"><label>Account based in (About this account; blank shows the detected region' + (u.country ? ", " + esc(u.country) : "") + ')</label><input data-f="based_in" maxlength="50" value="' + esc(u.based_in_override ?? "") + '"' + (canHere("updateUser") ? "" : " disabled") + "></div>" +
 		'<div class="field"><label>Joined from (after the date joined in About this account; a country, its code like SE, or a custom name; blank hides it)</label><input data-f="joined_from" maxlength="60" value="' + esc(u.joined_from ?? "") + '"' + (canHere("updateUser") ? "" : " disabled") + "></div>" +
 		(canHere("updateUser") ? '<button class="btn primary" id="save">Save profile</button>' : "") +
+		'<label class="row" style="margin-top:14px"><input type="checkbox" id="hide-about-info"' + (isGov || u.hide_about_info ? " checked" : "") + (isGov || !can("setHideAboutInfo") ? " disabled" : "") + '>Hide About this account details</label>' +
+		'<p class="dim small" style="margin:4px 0 0">' + (isGov ? "Automatic for government accounts: only join date and when the account was verified are shown." : "Hides everything in About this account except join date and when the account was verified.") + '</p>' +
 		(canHere("setUserCounts") ? '<h2 style="margin-top:20px">Shown counts</h2><p class="dim small">Blank shows the real number. Only the number on the profile changes, not the lists.</p><div class="row">' +
 			["followers", "following"].map((k) => '<label class="small" style="flex:1">' + k + '<input data-count="' + k + '" type="number" min="0" value="' + ((u.count_overrides || {})[k] ?? "") + '"></label>').join("") +
 			'</div><button class="btn" id="saveCounts" style="margin-top:8px">Save counts</button>' : "") + "</div>" +
@@ -2552,6 +2555,8 @@ async function renderUser(main, id) {
 		main.querySelectorAll("[data-f]").forEach((el) => body[el.dataset.f] = el.value);
 		act(() => api("updateUser", body), "Profile saved").then(again);
 	};
+	if (!isGov && can("setHideAboutInfo") && $("#hide-about-info"))
+		$("#hide-about-info").onchange = () => act(() => api("setHideAboutInfo", { id, enabled: $("#hide-about-info").checked }), "About this account visibility updated").then(again);
 	if ($("#badge")) $("#badge").onchange = () => act(() => api("setBadge", { id, badge: $("#badge").value }), "Badge set").then(again);
 	if (canHere("setAllowAffiliates") && $("#allow-affiliates")) $("#allow-affiliates").onchange = () => act(() => api("setAllowAffiliates", { id, enabled: $("#allow-affiliates").checked }), "Affiliate access updated").then(again);
 	if ($("#plabel")) $("#plabel").onchange = () => act(() => api("setProfileLabel", { id, label: $("#plabel").value }), "Label set").then(again);

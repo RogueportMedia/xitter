@@ -1978,5 +1978,6 @@ alter table ads add column if not exists name text;
 alter table ads add column if not exists existing_post boolean not null default false;
 create index if not exists ads_post_idx on ads (post_id) where post_id is not null;
 alter table users add column if not exists allow_affiliates boolean not null default true;
+alter table users add column if not exists hide_about_info boolean not null default false;
 -- self-thread grouping on timelines (posts.ts selfThreadPosts)
 create index if not exists posts_conversation_user_idx on posts (conversation_id, user_id, id);

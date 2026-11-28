@@ -43,6 +43,7 @@ import { adActions } from "./ads-admin";
 import { impersonateActions } from "./impersonate";
 import { AFFILIATION_LIMIT } from "./org-manage";
 import { staffGate } from "./staff-access";
+import { isGovernmentAccount } from "./about-account";
 import { countryCode, countryDisplayName } from "./countries";
 import { GRANTABLE, PERMISSIONS, RANK, type Role, allows, mayRun, permissionOf, rolePermissions } from "./staff-permissions";
 
@@ -72,7 +73,7 @@ export const AUDIT_ACTIONS = [
 	"release_identity", "remove_affiliate", "rename_platform", "rename_sticker_pack", "reset_branding", "reset_decor", "reset_password", "resolve_appeal",
 	"resolve_errors", "review_community_note_appeal", "revoke_api_tokens", "revoke_invite", "revoke_platform", "revoke_session", "revoke_strike",
 	"rollback_client", "save_automod", "save_operations", "save_security", "save_settings", "self_update", "self_update_rollback", "send_staff_message",
-	"send_test_mail", "set_allow_affiliates", "set_badge", "set_badges", "set_clients", "set_feature_switch", "set_flag", "set_never_sensitive", "set_notes_access", "set_post_counts",
+	"send_test_mail", "set_allow_affiliates", "set_badge", "set_badges", "set_clients", "set_feature_switch", "set_flag", "set_hide_about_info", "set_never_sensitive", "set_notes_access", "set_post_counts",
 	"set_post_note", "remove_post_note", "impersonate", "reveal_staff_ips", "shadow_ban", "lift_shadow_ban", "report_block", "lift_report_block", "set_post_notice", "set_post_visibility", "set_profile_label", "set_remote_checkmarks", "set_role", "set_signup_mode", "set_staff_permissions",
 	"set_status", "set_translator", "set_user_client", "set_user_counts", "sign_out", "superadmin_emergency_block", "superadmin_emergency_lift", "suspend_blocked_names",
 	"temporary_status", "unblock_oauth_app", "update_client", "upload_branding",
@@ -254,6 +255,16 @@ const ACTIONS: Record<string, Action> = {
 		await audit(a, "set_never_sensitive", id, { enabled: b.enabled });
 		return {};
 	} },
+	setHideAboutInfo: { role: "admin", run: async (a, b) => {
+		const id = idOf(b.id);
+		await guard(a, id);
+		if (typeof b.enabled !== "boolean") throw new AdminError("Provide a boolean setting.");
+		const [target] = await sql`select verified_type from users where id = ${id}::bigint`;
+		if (isGovernmentAccount(target?.verified_type)) throw new AdminError("Government accounts always hide About this account details.");
+		await sql`update users set hide_about_info = ${b.enabled} where id = ${id}::bigint`;
+		await audit(a, "set_hide_about_info", id, { enabled: b.enabled });
+		return {};
+	} },
 	platforms: { role: "admin", run: async () => ({ platforms: await sql`select id::text, label, revoked, created_at from client_platforms order by id desc` }) },
 	createPlatform: { role: "admin", run: async (a, b) => {
 		const label = typeof b.label === "string" ? b.label.trim() : "";
@@ -421,7 +432,7 @@ const ACTIONS: Record<string, Action> = {
 		role: "support",
 		run: async (a, b) => {
 			const id = idOf(b.id);
-			const [u] = await sql`select ${userListCols}, ${allows(a.role, "invites") ? sql`u.invite_code` : sql`null::text as invite_code`}, u.bio, u.location, u.website, u.banner_url, u.based_in_override, u.country, u.signup_country, u.count_overrides, u.decor, u.notes_writer, u.never_sensitive, u.shadow_banned, u.reports_blocked, u.org_badge_id::text, u.status_until, u.parody_label, u.label_id::text, u.instance, u.preferences->>'web_client' as web_client,
+			const [u] = await sql`select ${userListCols}, ${allows(a.role, "invites") ? sql`u.invite_code` : sql`null::text as invite_code`}, u.bio, u.location, u.website, u.banner_url, u.based_in_override, u.country, u.signup_country, u.hide_about_info, u.count_overrides, u.decor, u.notes_writer, u.never_sensitive, u.shadow_banned, u.reports_blocked, u.org_badge_id::text, u.status_until, u.parody_label, u.label_id::text, u.instance, u.preferences->>'web_client' as web_client,
 				(select coalesce(json_agg(ub.badge_id::text order by ub.position), '[]') from user_badges ub where ub.user_id = u.id) as badge_ids,
 				(select count(*)::int from sessions s where s.user_id = u.id) as sessions,
 				(select count(*)::int from api_tokens t where t.user_id = u.id) as api_tokens,

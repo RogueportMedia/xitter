@@ -10,7 +10,7 @@ import { analyticsHandlers } from "./analytics";
 import { bookmarkFolderHandlers } from "./bookmark-folders";
 import { communityHandlers } from "./communities";
 import { conversationSettings, replyControl, ReplyControlError } from "./reply-controls";
-import { countryDisplayName, countryName, regionName } from "./countries";
+import { aboutProfile } from "./about-account";
 import { gifHandlers } from "./gifs";
 import { listHandlers } from "./lists";
 import { placeById } from "./places";
@@ -591,13 +591,6 @@ const LANGUAGES: [string, string, string][] = [
 const userGlobalId = (id: string) => Buffer.from(`User:${id}`).toString("base64");
 const EMAIL_SETTINGS = ["send_twitter_emails", "send_email_vit_weekly", "send_network_activity_email", "send_new_direct_text_email", "send_shared_tweet_email", "send_network_digest", "send_performance_digest"];
 
-// "Account based in": the country if its owner chose that, else the continent
-function basedIn(country: string | null, preference: string | null): string | null {
-	if (!country) return null;
-	if (preference === "Country") return countryName(country) ?? null;
-	return regionName(country) ?? countryName(country) ?? null;
-}
-
 const handlers: Record<string, Handler> = {
 	// Settings > Notifications > Email: what is stored is what would be mailed
 	ViewerEmailSettings: async (v: Viewer) => {
@@ -773,7 +766,7 @@ const handlers: Record<string, Handler> = {
 		const user = typeof vars.screenName === "string" ? await userByName(v.id, vars.screenName) : undefined;
 		if (!user || user.status === "suspended")
 			return { data: { user_result_by_screen_name: { result: { __typename: "UserUnavailable", unavailable_reason: user ? "Suspended" : "NotFound" } } } };
-		const [extra] = await sql`select u.verified_at, u.country, u.based_in_override, u.signup_country, u.preferences->>'inferred_location_resolution_preference' as location_pref,
+		const [extra] = await sql`select u.verified_at, u.country, u.based_in_override, u.signup_country, u.hide_about_info, u.preferences->>'inferred_location_resolution_preference' as location_pref,
 			-- accounts from before sign-ups were recorded: the app of their first post
 			coalesce(u.signup_source, (select p.source from posts p where p.user_id = u.id order by p.id limit 1)) as source,
 			(select count(*)::int from username_changes c where c.user_id = u.id) as changes,
@@ -787,15 +780,18 @@ const handlers: Record<string, Handler> = {
 						...base,
 						rest_id: user.id,
 						identity_profile_labels_highlighted_label: base.affiliates_highlighted_label,
-						about_profile: {
-							affiliate_username: user.org?.screen_name ?? null,
-							account_based_in: extra.based_in_override ?? basedIn(extra.country, extra.location_pref),
-							...(extra.signup_country ? { created_country: countryDisplayName(extra.signup_country), created_country_accurate: true } : {}),
-							...(extra.source ? { source: extra.source } : {}),
-							learn_more_url: `${PUBLIC_ORIGIN}/rules`,
-							location_accurate: true,
-							username_changes: { count: String(extra.changes), ...(extra.last_change ? { last_changed_at_msec: String(extra.last_change.getTime()) } : {}) },
-						},
+						about_profile: aboutProfile({
+							verifiedType: user.verified_type,
+							hideAboutInfo: extra?.hide_about_info,
+							affiliateUsername: user.org?.screen_name ?? null,
+							country: extra?.country,
+							basedInOverride: extra?.based_in_override,
+							locationPref: extra?.location_pref,
+							signupCountry: extra?.signup_country,
+							source: extra?.source,
+							usernameChanges: extra?.changes,
+							lastUsernameChange: extra?.last_change,
+						}),
 					},
 				},
 			},
