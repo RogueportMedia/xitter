@@ -14,8 +14,8 @@ export type AboutAccountData = {
 	lastUsernameChange?: Date | null;
 };
 
-// Government accounts always hide About this account metadata except join date
-// and verification date (which live on the base user record).
+// Government accounts always hide About this account metadata except join date,
+// verification date (which live on the base user record), and affiliation.
 export const isGovernmentAccount = (verifiedType: string | null | undefined): boolean =>
 	verifiedType === "government" || verifiedType === "government_individual";
 
@@ -32,7 +32,7 @@ export function basedIn(country: string | null | undefined, preference: string |
 export function aboutProfile(data: AboutAccountData, origin = PUBLIC_ORIGIN) {
 	if (hidesAboutInfo(data.verifiedType, data.hideAboutInfo)) {
 		return {
-			affiliate_username: null,
+			affiliate_username: data.affiliateUsername ?? null,
 			account_based_in: null,
 			learn_more_url: `${origin}/rules`,
 			location_accurate: true,

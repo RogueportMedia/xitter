@@ -1,6 +1,6 @@
 // About this account visibility (about-account.ts): government and
-// government_individual accounts always hide all About metadata except join
-// date and verification date; other accounts follow the admin toggle.
+// government_individual accounts always hide About metadata except join date,
+// verification date, and affiliation; other accounts follow the admin toggle.
 import { expect, test } from "bun:test";
 import { aboutProfile, hidesAboutInfo, isGovernmentAccount } from "../src/about-account";
 import type { User } from "../src/auth";
@@ -34,11 +34,17 @@ const sampleUser = (extra: Partial<User> = {}) =>
 		...extra,
 	}) as User;
 
-test("government and government_individual accounts automatically hide About details", () => {
+test("government and government_individual accounts automatically hide About details except affiliation", () => {
 	for (const verifiedType of ["government", "government_individual"] as const) {
 		expect(isGovernmentAccount(verifiedType)).toBe(true);
 		expect(hidesAboutInfo(verifiedType, false)).toBe(true);
 		expect(aboutProfile({ ...sampleData, verifiedType, hideAboutInfo: false }, ORIGIN)).toEqual({
+			affiliate_username: "gov_org",
+			account_based_in: null,
+			learn_more_url: `${ORIGIN}/rules`,
+			location_accurate: true,
+		});
+		expect(aboutProfile({ ...sampleData, affiliateUsername: null, verifiedType, hideAboutInfo: false }, ORIGIN)).toEqual({
 			affiliate_username: null,
 			account_based_in: null,
 			learn_more_url: `${ORIGIN}/rules`,
@@ -50,7 +56,7 @@ test("government and government_individual accounts automatically hide About det
 	}
 });
 
-test("other accounts show About details by default and hide them when toggled on", () => {
+test("other accounts show About details by default and hide them except affiliation when toggled on", () => {
 	for (const verifiedType of [null, "blue", "business"] as const) {
 		expect(isGovernmentAccount(verifiedType)).toBe(false);
 		expect(hidesAboutInfo(verifiedType, false)).toBe(false);
@@ -71,6 +77,12 @@ test("other accounts show About details by default and hide them when toggled on
 
 		expect(hidesAboutInfo(verifiedType, true)).toBe(true);
 		expect(aboutProfile({ ...sampleData, verifiedType, hideAboutInfo: true }, ORIGIN)).toEqual({
+			affiliate_username: "gov_org",
+			account_based_in: null,
+			learn_more_url: `${ORIGIN}/rules`,
+			location_accurate: true,
+		});
+		expect(aboutProfile({ ...sampleData, affiliateUsername: null, verifiedType, hideAboutInfo: true }, ORIGIN)).toEqual({
 			affiliate_username: null,
 			account_based_in: null,
 			learn_more_url: `${ORIGIN}/rules`,
