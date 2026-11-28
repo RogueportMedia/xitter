@@ -14,8 +14,8 @@ import { oneLine } from "./text-clean";
 import { SUPERADMINS, isSuperadminHome, superadminNameHere, superadminOf } from "./superadmins";
 import { FEDERATION_ON, ID_RE, INSTANCE_ID, acceptKeyChange, isBlocked as isFederationBlocked, isPeer, liftBlock, listBlocks, listed, listedInstance, pendingKeyChange, publicKey, registryCheckedAt, registryError, registrySequence, setBlock as setFederationBlock } from "./federation";
 import { dropRemoteMedia, pullFrom, savedRemoteMedia, storesRemoteMedia } from "./federation-sync";
-import type { Viewer } from "./auth";
-import { sql } from "./db";
+import { type Viewer, closeSignedOutSockets, revokeCredentials } from "./auth";
+import { holdLock, sql } from "./db";
 import { isOrganizationSql } from "./users";
 import { flagValue, unknownFlag } from "./flags";
 import { isId, newId } from "./ids";
@@ -31,7 +31,7 @@ import { SLOTS, brandingState, resetBranding, saveBranding } from "./branding";
 import { createPlatform, renamePlatform, renameWebSource, validPlatformLabel } from "./platforms";
 import { TopicError, deleteTopic, listTopics, saveTopic } from "./topics";
 import { CardError, deleteCard, listCards, saveCard } from "./explore-cards";
-import { mailEnabled, mailFrom, sendMail } from "./mail";
+import { mailEnabled, mailFrom, sendMail, validEmail } from "./mail";
 import { mailDigests } from "./mail-digest";
 import { toolActions } from "./admin-tools";
 import { stickerActions } from "./stickers";
@@ -78,6 +78,27 @@ export const AUDIT_ACTIONS = [
 	"set_status", "set_translator", "set_user_client", "set_user_counts", "sign_out", "superadmin_emergency_block", "superadmin_emergency_lift", "suspend_blocked_names",
 	"temporary_status", "unblock_oauth_app", "update_client", "upload_branding",
 ];
+
+function redactDetail(role: string | null | undefined, action: string, detail: any) {
+	if (!detail || typeof detail !== "object" || Array.isArray(detail)) return detail;
+	const ips = allows(role, "ip_addresses");
+	const emails = allows(role, "emails");
+	if (ips && emails) return detail;
+	const out = { ...detail };
+	if (!ips) {
+		delete out.ip;
+		delete out.admin_ips;
+		if (out.kind === "ip") delete out.value;
+	}
+	if (!emails) {
+		delete out.email;
+		if (action === "send_test_mail") delete out.to;
+		if (out.kind === "email") delete out.value;
+	}
+	return out;
+}
+
+const redactLog = <T extends { action: string; detail: unknown }>(role: string | null | undefined, rows: T[]) => rows.map((r) => ({ ...r, detail: redactDetail(role, r.action, r.detail) }));
 
 export async function audit(actor: Viewer, action: string, target: string | null, detail: unknown = null) {
 	await sql`insert into audit_log (id, actor_id, action, target, detail)
@@ -298,7 +319,7 @@ const ACTIONS: Record<string, Action> = {
 	// what Resend says to a test mail answers whether the sending domain is verified
 	sendTestMail: { role: "admin", run: async (a, b) => {
 		const to = typeof b.to === "string" ? b.to.trim() : "";
-		if (!/^[^\s@]{1,64}@[^\s@]{1,253}$/.test(to)) throw new AdminError("Enter an email address.");
+		if (!validEmail(to)) throw new AdminError("Enter an email address.");
 		const name = settings().instance_name;
 		try {
 			await sendMail(to, `Test mail from ${name}`, `This is a test from the ${name} admin panel, sent by @${a.screen_name}. If you can read it, mail works.`, { kind: "test", userId: a.id });
@@ -451,7 +472,7 @@ const ACTIONS: Record<string, Action> = {
 				join users u on u.id = other.user_id
 				where mine.user_id = ${id}::bigint and mine.ip is not null and mine.created_at > now() - interval '90 days' limit 20`;
 			u.joined_from = u.signup_country ? countryDisplayName(u.signup_country) : "";
-			return { clients: clientBuilds().map(({ id, label }) => ({ id, label })), user: u, invited, log, alts, strikes, next_step: ladder.length ? ladder[Math.min(strikes + 1, ladder.length) - 1] : 0 };
+			return { clients: clientBuilds().map(({ id, label }) => ({ id, label })), user: u, invited, log: redactLog(a.role, log as any), alts, strikes, next_step: ladder.length ? ladder[Math.min(strikes + 1, ladder.length) - 1] : 0 };
 		},
 	},
 
@@ -606,7 +627,14 @@ const ACTIONS: Record<string, Action> = {
 			}
 			// nobody demotes staff at or above their own rank, the owner included
 			await guard(a, id, true);
-			await sql`update users set role = ${role}, role_granted_by = ${role ? a.id : null}::bigint where id = ${id}::bigint`;
+			await sql.begin(async (tx) => {
+				await holdLock(tx, "local-admins");
+				if (id === a.id && role !== "admin") {
+					const [{ n }] = await tx`select count(*)::int as n from users where role = 'admin' and instance is null`;
+					if (n <= 1) throw new AdminError("You are the last admin.");
+				}
+				await tx`update users set role = ${role}, role_granted_by = ${role ? a.id : null}::bigint where id = ${id}::bigint`;
+			});
 			await audit(a, "set_role", id, { role });
 			return {};
 		},
@@ -628,16 +656,10 @@ const ACTIONS: Record<string, Action> = {
 				await guard(a, id, true);
 				if (target.instance) throw new AdminError(`That account lives on ${target.instance}, which manages it. Here you can only moderate it.`, 403);
 				await tx`update users set password_hash = ${hash} where id = ${id}::bigint`;
-				await tx`delete from sessions where user_id = ${id}::bigint`;
-				await tx`delete from api_tokens where user_id = ${id}::bigint`;
-				await tx`delete from oauth_codes where user_id = ${id}::bigint`;
-				await tx`delete from migration_tokens where user_id = ${id}::bigint and completed_at is null`;
-				await tx`update password_resets set used = true where user_id = ${id}::bigint and not used`;
-				await tx`delete from login_challenges where user_id = ${id}::bigint`;
+				await revokeCredentials(tx, id);
 				await tx`delete from passkeys where user_id = ${id}::bigint`;
-				await tx`delete from passkey_challenges where user_id = ${id}::bigint`;
-				await tx`update email_confirmations set used = true where user_id = ${id}::bigint and not used`;
 			});
+			closeSignedOutSockets(id);
 			await audit(a, "reset_password", id);
 			return { password };
 		},
@@ -649,6 +671,7 @@ const ACTIONS: Record<string, Action> = {
 			const id = idOf(b.id);
 			await guard(a, id, true);
 			const rows = await sql`delete from sessions where user_id = ${id}::bigint returning token`;
+			closeSignedOutSockets(id);
 			await audit(a, "sign_out", id, { sessions: rows.length });
 			return { sessions: rows.length };
 		},
@@ -661,6 +684,7 @@ const ACTIONS: Record<string, Action> = {
 			const id = idOf(b.id);
 			await guard(a, id, true);
 			const rows = await sql`delete from api_tokens where user_id = ${id}::bigint returning id`;
+			await sql`delete from oauth_codes where user_id = ${id}::bigint`;
 			await audit(a, "revoke_api_tokens", id, { tokens: rows.length });
 			return { tokens: rows.length };
 		},
@@ -1122,7 +1146,7 @@ const ACTIONS: Record<string, Action> = {
 
 	audit: {
 		role: "support",
-		run: async (_a, b) => {
+		run: async (a, b) => {
 			const action = typeof b.action === "string" && /^[a-z_]{1,40}$/.test(b.action) ? b.action : null;
 			const who = typeof b.target === "string" ? b.target.trim().replace(/^@/, "").slice(0, 300).replace(new RegExp(`@${INSTANCE_ID.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i"), "") : "";
 			const offset = Math.max(0, Math.min(Number(b.offset) || 0, 100_000));
@@ -1135,13 +1159,13 @@ const ACTIONS: Record<string, Action> = {
 			return {
 				total: Number(total[0]?.total ?? 0),
 				actions: [...new Set([...AUDIT_ACTIONS, ...logged.map((r: { action: string }) => r.action)])].sort(),
-				entries: await sql`select l.id::text as id, l.action, l.target, l.detail, l.created_at, a.screen_name as actor, l.actor_id is null as automatic,
+				entries: redactLog(a.role, await sql`select l.id::text as id, l.action, l.target, l.detail, l.created_at, a.screen_name as actor, l.actor_id is null as automatic,
 					t.screen_name as target_name
 					from audit_log l left join users a on a.id = l.actor_id
 					left join users t on l.target ~ '^[0-9]+$' and t.id = l.target::bigint
 					where ${action ? sql`l.action = ${action}` : sql`true`} and ${b.automatic ? sql`l.actor_id is null` : sql`true`}
 						and ${who ? sql`lower(t.screen_name) = lower(${who})` : sql`true`}
-					order by l.id desc limit 100 offset ${offset}`,
+					order by l.id desc limit 100 offset ${offset}`),
 			};
 		},
 	},
